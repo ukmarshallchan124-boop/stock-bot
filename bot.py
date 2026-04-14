@@ -1,15 +1,18 @@
-import os, asyncio, requests, yfinance as yf, json
+import os, json, requests, yfinance as yf
 from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# ========= ENV =========
 TOKEN = os.getenv("TOKEN")
 RENDER_URL = os.getenv("RENDER_URL")
 NEWS_API = os.getenv("NEWS_API")
 
 bot = Bot(token=TOKEN)
+
 stocks = ["TSLA","NVDA","AMD"]
 
+# ========= DATA =========
 DATA_FILE = "data.json"
 
 def load_data():
@@ -18,12 +21,12 @@ def load_data():
     except:
         return {"wins":0,"loss":0,"threshold":70,"positions":{}}
 
-def save_data(data):
-    json.dump(data, open(DATA_FILE,"w"))
+def save_data(d):
+    json.dump(d, open(DATA_FILE,"w"))
 
 data_store = load_data()
 
-# ===== 股票 =====
+# ========= STOCK =========
 def get_data(symbol):
     df = yf.download(symbol, period="5d", interval="15m").dropna()
     close = df["Close"]
@@ -47,7 +50,7 @@ def get_data(symbol):
 
     return price, rsi, macd.iloc[-1], signal.iloc[-1], support, resistance
 
-# ===== AI =====
+# ========= AI =========
 def ai_score(rsi, macd, signal, price, support, resistance):
     score = 50
 
@@ -65,7 +68,7 @@ def ai_score(rsi, macd, signal, price, support, resistance):
 
     return max(0,min(100,score))
 
-# ===== trade =====
+# ========= TRADE =========
 def trade(symbol, price, action):
     pos = data_store["positions"]
 
@@ -82,32 +85,31 @@ def trade(symbol, price, action):
         else: data_store["loss"]+=1
 
         save_data(data_store)
+        return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit {profit:.2f}%"
 
-        return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
-
-# ===== news =====
+# ========= NEWS =========
 def get_news(symbol):
     try:
         url=f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
         res=requests.get(url).json()
         articles=res.get("articles",[])[:2]
 
-        text="\n📰 新聞\n"
+        text="\n📰 新聞：\n"
         for a in articles:
             text+=f"• {a['title']}\n"
-
         return text
     except:
         return ""
 
-# ===== build =====
+# ========= BUILD =========
 def build(symbol):
     price,rsi,macd,signal,support,resistance=get_data(symbol)
     score=ai_score(rsi,macd,signal,price,support,resistance)
 
     msg=f"""📊 {symbol}
-💰 {price:.2f}
-🧠 AI {score:.0f}
+
+💰 價格 {price:.2f}
+🧠 AI評分 {score:.0f}
 
 RSI {rsi:.1f}
 MACD {"🟢" if macd>signal else "🔴"}
@@ -116,27 +118,25 @@ MACD {"🟢" if macd>signal else "🔴"}
 阻力 {resistance:.2f}
 """
 
-    threshold=data_store["threshold"]
+    th=data_store["threshold"]
 
-    if score>=threshold:
+    if score>=th:
         msg+="\n🟢 BUY"
         msg+= "\n"+ (trade(symbol,price,"BUY") or "")
-
-    elif score<=100-threshold:
+    elif score<=100-th:
         msg+="\n🔴 SELL"
         msg+= "\n"+ (trade(symbol,price,"SELL") or "")
-
     else:
         msg+="\n⚪ WAIT"
 
     msg+=get_news(symbol)
     return msg
 
-# ===== telegram =====
+# ========= TELEGRAM =========
 app_tg = ApplicationBuilder().token(TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 Bot ready")
+    await update.message.reply_text("🚀 AI交易Bot已啟動\n/check 查看")
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args=context.args
@@ -150,13 +150,13 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     w=data_store["wins"]
     l=data_store["loss"]
     rate=w/max(1,(w+l))*100
-    await update.message.reply_text(f"勝率 {rate:.1f}%")
+    await update.message.reply_text(f"📊 勝率 {rate:.1f}% ({w}W/{l}L)")
 
 app_tg.add_handler(CommandHandler("start", start))
 app_tg.add_handler(CommandHandler("check", check))
 app_tg.add_handler(CommandHandler("stats", stats))
 
-# ===== Flask =====
+# ========= FLASK =========
 app = Flask(__name__)
 
 @app.route("/")
@@ -164,18 +164,27 @@ def home():
     return "alive"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
-    await app_tg.process_update(update)
+
+    import asyncio
+    asyncio.run(app_tg.process_update(update))
+
     return "ok"
 
-# ===== run =====
-async def main():
-    await app_tg.initialize()
-    await app_tg.start()
-    await bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
-    print("✅ webhook set")
+# ========= RUN =========
+def start_bot():
+    import asyncio
+
+    async def setup():
+        await app_tg.initialize()
+        await app_tg.start()
+        await bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
+        print("✅ webhook ready")
+
+    asyncio.run(setup())
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    app.run(host="0.0.0.0", port=10000)
+    start_bot()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
