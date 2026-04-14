@@ -8,10 +8,10 @@ from ta.momentum import RSIIndicator
 from ta.trend import MACD
 import threading
 import os
-from flask import Flask
+import random
 
 # ======================
-# 🔐 ENV
+# 🔑 ENV（⚠️ 記得去 Render 設）
 # ======================
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -30,15 +30,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /check → 即時分析
 
 💡 功能：
-• 技術分析 📈
-• AI新聞 📰
-• 買賣提示 🔔
-• 跌幅警報 🚨
+• 技術分析
+• AI新聞（中文）
+• 買賣提示
 """
     await update.message.reply_text(msg)
 
 # ======================
-# 🔍 /check（完整詳細版）
+# 🔍 /check
 # ======================
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for s in stocks:
@@ -46,29 +45,33 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
 
 # ======================
-# 📊 股票數據（防封版）
+# 📊 股票數據（防 rate limit）
 # ======================
 def get_stock_data(symbol):
     for i in range(3):
         try:
+            time.sleep(random.uniform(1, 3))  # 🔥 防封
             df = yf.download(symbol, period="2d", interval="5m")
             df = df.dropna()
+
             close = df["Close"].squeeze()
-            break
+
+            price = close.iloc[-1]
+            prev = close.iloc[0]
+            change = ((price - prev) / prev) * 100
+
+            rsi = RSIIndicator(close).rsi().iloc[-1]
+
+            macd = MACD(close)
+            macd_val = macd.macd().iloc[-1]
+            signal = macd.macd_signal().iloc[-1]
+
+            return price, change, rsi, macd_val, signal
+
         except:
-            time.sleep(3)
+            time.sleep(5)
 
-    price = close.iloc[-1]
-    prev = close.iloc[0]
-    change = ((price - prev) / prev) * 100
-
-    rsi = RSIIndicator(close).rsi().iloc[-1]
-
-    macd = MACD(close)
-    macd_val = macd.macd().iloc[-1]
-    signal = macd.macd_signal().iloc[-1]
-
-    return price, change, rsi, macd_val, signal
+    raise Exception("❌ 無法取得數據")
 
 # ======================
 # 🧠 分析
@@ -94,40 +97,35 @@ def analyze(rsi, macd, signal):
     return trend, rsi_text, macd_text, rating, advice
 
 # ======================
-# 📰 AI新聞（篩選）
+# 📰 新聞（已解決亂碼）
 # ======================
 def get_news(symbol):
     try:
         url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
-        res = requests.get(url, timeout=10).json()
+        res = requests.get(url).json()
 
-        articles = res.get("articles", [])[:5]
+        articles = res.get("articles", [])[:3]
 
         text = "\n📰【市場新聞】\n"
         score = 0
-        useful = 0
 
         for a in articles:
             title = a["title"]
+
             lower = title.lower()
 
-            if any(w in lower for w in ["beat","growth","surge","record","strong"]):
+            if any(w in lower for w in ["beat", "growth", "surge", "record"]):
                 sentiment = "🟢 利好"
                 score += 1
-                useful += 1
-            elif any(w in lower for w in ["drop","fall","risk","warn","miss"]):
+            elif any(w in lower for w in ["drop", "fall", "risk", "warn"]):
                 sentiment = "🔴 利淡"
                 score -= 1
-                useful += 1
             else:
-                continue
+                sentiment = "⚪ 中性"
 
             text += f"• {title}\n{sentiment}\n"
 
-        if useful == 0:
-            return ""
-
-        overall = "🟢 偏好" if score > 0 else "🔴 偏淡"
+        overall = "🟢 偏好" if score > 0 else "🔴 偏淡" if score < 0 else "⚪ 中性"
         text += f"\n🧠 AI總結：{overall}"
 
         return text
@@ -136,7 +134,7 @@ def get_news(symbol):
         return ""
 
 # ======================
-# 📦 訊息模板（統一）
+# 📦 訊息格式（已修復 emoji）
 # ======================
 def build_message(s, include_news=False):
     price, change, rsi, macd, signal = get_stock_data(s)
@@ -160,26 +158,28 @@ MACD：{macd_text}
         if news:
             msg += news
 
-    return msg, change, rsi, macd, signal
+    return msg
 
 # ======================
-# 📤 發送
+# 📤 發送（🔥關鍵：用 json）
 # ======================
 def send(msg):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+
         requests.post(
-    url,
-    json={
-        "chat_id": CHAT_ID,
-        "text": msg
-    }
-)
-    except:
-        print("❌ send fail")
+            url,
+            json={
+                "chat_id": CHAT_ID,
+                "text": msg
+            }
+        )
+
+    except Exception as e:
+        print("❌ send error:", e)
 
 # ======================
-# 🚀 自動 Bot（核心）
+# 🚀 自動推送
 # ======================
 def run():
     count = 0
@@ -187,20 +187,17 @@ def run():
     while True:
         for s in stocks:
             try:
-                msg, change, rsi, macd, signal = build_message(s)
+                msg = build_message(s)
 
-                # 🔥 高頻新聞策略
+                # TSLA + NVDA 高頻新聞
                 if s in ["TSLA", "NVDA"]:
-                    msg += get_news(s)
-
-                elif s == "AMD" and count % 2 == 0:
                     msg += get_news(s)
 
                 send(msg)
 
-                # ======================
-                # 🔔 買賣訊號（防重複）
-                # ======================
+                # 🔔 訊號
+                price, change, rsi, macd, signal = get_stock_data(s)
+
                 signal_type = None
 
                 if rsi < 30 and macd > signal:
@@ -216,23 +213,15 @@ def run():
                     elif signal_type == "SELL":
                         send(f"🔴 賣出訊號！{s}")
 
-                # ======================
-                # 🚨 跌幅警報
-                # ======================
-                if change < -3:
-                    send(f"🚨 {s} 跌超過 -3%！")
-
-                time.sleep(5)
-
             except Exception as e:
                 print("Error:", e)
 
         count += 1
 
-        if count % 30 == 0:
-            send("🤖 Bot運行正常")
+        if count % 24 == 0:
+            send("🤖 Bot 運行正常")
 
-        time.sleep(1800)
+        time.sleep(3600)  # 🔥 1小時
 
 # ======================
 # 🤖 Telegram
@@ -253,8 +242,10 @@ def start_bot():
             time.sleep(10)
 
 # ======================
-# 🌐 Flask（防 Render sleep）
+# 🌐 Flask（防 sleep）
 # ======================
+from flask import Flask
+
 app = Flask(__name__)
 
 @app.route("/")
@@ -262,12 +253,11 @@ def home():
     return "Bot running!"
 
 def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=10000)
 
 # ======================
-# ▶️ 同時運行（重要順序）
+# ▶️ 啟動
 # ======================
-threading.Thread(target=run_web).start()
 threading.Thread(target=run).start()
+threading.Thread(target=run_web).start()
 start_bot()
