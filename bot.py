@@ -20,11 +20,17 @@ def save_data(data):
 data_store = load_data()
 
 # ======================
-# 📊 DATA
+# 📊 FIXED DATA (穩定版)
 # ======================
 def get_data(symbol):
     try:
-        df = yf.download(symbol, period="5d", interval="15m", progress=False).dropna()
+        ticker = yf.Ticker(symbol)
+
+        df = ticker.history(period="5d", interval="1h")
+
+        # fallback
+        if df.empty:
+            df = ticker.history(period="1mo", interval="1d")
 
         if df.empty:
             return None
@@ -49,7 +55,8 @@ def get_data(symbol):
 
         return price, rsi, float(macd.iloc[-1]), float(signal.iloc[-1]), support, resistance
 
-    except:
+    except Exception as e:
+        print("DATA ERROR:", e)
         return None
 
 # ======================
@@ -94,7 +101,7 @@ def trade(symbol, price, action):
         return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
 
 # ======================
-# 📰 NEWS
+# 📰 NEWS（含SpaceX）
 # ======================
 def get_news(symbol):
     try:
@@ -118,7 +125,7 @@ def build(symbol):
     data = get_data(symbol)
 
     if data is None:
-        return f"⚠️ {symbol} 暫時無數據"
+        return f"⚠️ {symbol} 暫時無數據（可能API延遲）"
 
     price,rsi,macd,signal,support,resistance = data
 
@@ -163,7 +170,7 @@ def send(chat_id, text):
     requests.post(url, json={"chat_id":chat_id,"text":text})
 
 # ======================
-# 🤖 AUTO PUSH（每30分鐘🔥）
+# ⏰ AUTO PUSH（30分鐘）
 # ======================
 CHAT_ID = None
 
@@ -173,14 +180,14 @@ def auto_push():
             if CHAT_ID:
                 for s in stocks:
                     send(CHAT_ID, "⏰ 半小時更新\n" + build(s))
-            time.sleep(1800)  # 🔥 30分鐘
+            time.sleep(1800)
         except:
             time.sleep(1800)
 
 threading.Thread(target=auto_push, daemon=True).start()
 
 # ======================
-# 🌐 FLASK
+# 🌐 WEBHOOK
 # ======================
 app = Flask(__name__)
 
