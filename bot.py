@@ -1,7 +1,5 @@
-import os, requests, yfinance as yf, json, asyncio
+import os, requests, yfinance as yf, json
 from flask import Flask, request
-from telegram import Update, Bot
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ======================
 # 🔑 ENV
@@ -10,12 +8,10 @@ TOKEN = os.getenv("TOKEN")
 RENDER_URL = os.getenv("RENDER_URL")
 NEWS_API = os.getenv("NEWS_API")
 
-bot = Bot(token=TOKEN)
-
 stocks = ["TSLA","NVDA","AMD"]
 
 # ======================
-# 📂 DATA
+# 📂 DATA（AI learning）
 # ======================
 DATA_FILE = "data.json"
 
@@ -54,7 +50,7 @@ def get_data(symbol):
     return price, rsi, macd.iloc[-1], signal.iloc[-1], close.tail(50).min(), close.tail(50).max()
 
 # ======================
-# 🧠 AI SCORE
+# 🧠 AI SCORE（會學習）
 # ======================
 def ai_score(rsi, macd, signal, price, support, resistance):
     score = 50
@@ -151,39 +147,14 @@ MACD：{"🟢" if macd>signal else "🔴"}
     return msg
 
 # ======================
-# 🤖 COMMANDS
+# 📤 SEND MESSAGE
 # ======================
-app_tg = ApplicationBuilder().token(TOKEN).build()
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🚀 AI Trading Bot\n\n"
-        "/check → 全部\n"
-        "/check TSLA → 單隻\n"
-        "/stats → 勝率"
-    )
-
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args=context.args
-
-    if args:
-        await update.message.reply_text(build(args[0].upper()))
-    else:
-        for s in stocks:
-            await update.message.reply_text(build(s))
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    w=data_store["wins"]
-    l=data_store["loss"]
-    rate=w/max(1,(w+l))*100
-    await update.message.reply_text(f"📊 勝率 {rate:.1f}% ({w}W/{l}L)")
-
-app_tg.add_handler(CommandHandler("start", start))
-app_tg.add_handler(CommandHandler("check", check))
-app_tg.add_handler(CommandHandler("stats", stats))
+def send(chat_id, text):
+    url=f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id":chat_id,"text":text})
 
 # ======================
-# 🌐 FLASK WEBHOOK（穩定版）
+# 🌐 FLASK WEBHOOK（穩定）
 # ======================
 app = Flask(__name__)
 
@@ -194,15 +165,43 @@ def home():
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     try:
-        update = Update.de_json(request.get_json(force=True), bot)
-        asyncio.run(app_tg.process_update(update))
+        data = request.get_json(force=True)
+
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text","")
+
+        if text == "/start":
+            send(chat_id,
+                 "🚀 AI交易Bot\n\n"
+                 "/check → 全部分析\n"
+                 "/check TSLA → 單隻\n"
+                 "/stats → 勝率")
+
+        elif text.startswith("/check"):
+            args = text.split()
+
+            if len(args) > 1:
+                send(chat_id, build(args[1].upper()))
+            else:
+                for s in stocks:
+                    send(chat_id, build(s))
+
+        elif text == "/stats":
+            w=data_store["wins"]
+            l=data_store["loss"]
+            rate=w/max(1,(w+l))*100
+            send(chat_id, f"📊 勝率 {rate:.1f}% ({w}W/{l}L)")
+
     except Exception as e:
         print("ERROR:", e)
+
     return "ok"
 
 # ======================
-# 🚀 START（無 asyncio bug）
+# 🚀 START
 # ======================
 if __name__ == "__main__":
+    # 設 webhook（最穩方法）
     requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={RENDER_URL}/{TOKEN}")
+
     app.run(host="0.0.0.0", port=10000)
