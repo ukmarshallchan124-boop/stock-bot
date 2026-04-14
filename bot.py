@@ -1,214 +1,208 @@
-import os, json, requests, yfinance as yf, time, threading
 from flask import Flask, request
+import requests, os, time, threading
+import yfinance as yf
+
+app = Flask(__name__)
 
 TOKEN = os.getenv("TOKEN")
-NEWS_API = os.getenv("NEWS_API")
 CHAT_ID = os.getenv("CHAT_ID")
+NEWS_API = os.getenv("NEWS_API")
 
-stocks = ["TSLA","NVDA","AMD"]
+SYMBOLS = ["TSLA","NVDA","AMD"]
+
+last_alert = {}
+
+# ======================
+# 📩 SEND
+# ======================
+def send(msg):
+    try:
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                      json={"chat_id": CHAT_ID, "text": msg})
+    except:
+        pass
 
 # ======================
 # 📊 DATA
 # ======================
 def get_data(symbol):
-    try:
-        df = yf.Ticker(symbol).history(period="5d", interval="1h")
-        if df.empty:
-            df = yf.Ticker(symbol).history(period="1mo", interval="1d")
+    df = yf.Ticker(symbol).history(period="2d", interval="5m")
 
-        close = df["Close"]
+    price = df["Close"].iloc[-1]
+    prev = df["Close"].iloc[0]
+    change = (price-prev)/prev*100
 
-        price = float(close.iloc[-1])
-        prev_close = float(close.iloc[-2])
-        change_pct = (price - prev_close) / prev_close * 100
+    high = df["High"].max()
+    low = df["Low"].min()
 
-        delta = close.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = -delta.clip(upper=0).rolling(14).mean()
-        rs = gain / loss
-        rsi = float((100 - (100/(1+rs))).iloc[-1])
+    # RSI
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    rs = gain.rolling(14).mean() / loss.rolling(14).mean()
+    rsi = 100-(100/(1+rs))
 
-        ema12 = close.ewm(span=12).mean()
-        ema26 = close.ewm(span=26).mean()
-        macd = ema12 - ema26
-        signal = macd.ewm(span=9).mean()
+    # MACD
+    ema12 = df["Close"].ewm(span=12).mean()
+    ema26 = df["Close"].ewm(span=26).mean()
+    macd = ema12-ema26
+    signal = macd.ewm(span=9).mean()
 
-        support = float(close.tail(50).min())
-        resistance = float(close.tail(50).max())
-
-        return price, change_pct, rsi, float(macd.iloc[-1]), float(signal.iloc[-1]), support, resistance
-
-    except:
-        return None
+    return price, change, rsi.iloc[-1], macd.iloc[-1], signal.iloc[-1], low, high
 
 # ======================
-# 🧠 AI（機率版）
+# 🧠 AI 預測（升級版）
 # ======================
-def ai_probability(rsi, macd, signal, price, support, resistance):
+def ai_predict(price, rsi, macd, signal, support, resistance):
     prob = 50
 
-    if rsi < 30: prob += 20
-    elif rsi > 70: prob -= 20
+    # RSI
+    if rsi < 30: prob += 25
+    elif rsi > 70: prob -= 25
 
-    if macd > signal: prob += 15
+    # MACD
+    if macd > signal: prob += 20
     else: prob -= 15
 
-    if price <= support*1.03: prob += 10
-    if price >= resistance*0.97: prob -= 10
+    # 支撐阻力位置
+    if price <= support*1.02: prob += 10
+    if price >= resistance*0.98: prob -= 10
 
-    return max(5, min(95, prob))
+    prob = max(5, min(95, prob))
+
+    # 建議
+    if prob >= 70:
+        action = "🔥 可考慮買入"
+    elif prob <= 35:
+        action = "⚠️ 建議減倉"
+    else:
+        action = "⚪ 觀望"
+
+    return prob, action
 
 # ======================
-# 💰 波段策略
+# 📰 新聞 AI
 # ======================
-def strategy(price, support, resistance):
-    entry = support * 1.02
-    stop = support * 0.97
-    target = resistance * 0.98
-
-    return entry, stop, target
-
-# ======================
-# 📰 NEWS
-# ======================
-def get_news():
+def get_news(symbol):
     try:
-        url=f"https://newsapi.org/v2/everything?q=Tesla OR Nvidia OR AMD OR SpaceX IPO&apiKey={NEWS_API}"
-        res=requests.get(url).json()
+        url=f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
+        data=requests.get(url).json()
 
-        text="\n📰【市場新聞】\n"
+        text=f"\n📰【{symbol} 新聞】\n"
 
-        for a in res.get("articles",[])[:3]:
-            title=a["title"]
-            source=a["source"]["name"]
+        for a in data.get("articles",[])[:3]:
+            t=a["title"]
 
-            zh = title.replace("Tesla","特斯拉")\
-                      .replace("Nvidia","英偉達")\
-                      .replace("AMD","超微")
-
-            if any(x in title.lower() for x in ["surge","growth","beat"]):
-                senti="🟢 利好"
-            elif any(x in title.lower() for x in ["drop","fall","warn"]):
-                senti="🔴 利淡"
+            # 情緒判斷
+            if any(x in t.lower() for x in ["surge","beat","growth"]):
+                senti="🟢利好"
+            elif any(x in t.lower() for x in ["drop","fall","risk"]):
+                senti="🔴利淡"
             else:
-                senti="⚪ 中性"
+                senti="⚪中性"
 
-            text += f"• {zh}\n({source}) {senti}\n"
-
-            if "spacex" in title.lower() and "ipo" in title.lower():
-                text += "🚨 SpaceX IPO消息\n"
+            text+=f"• {t}\n{senti}\n"
 
         return text
-
     except:
         return ""
 
 # ======================
-# 📊 BUILD（終極版）
+# 📊 FORMAT
 # ======================
 def build(symbol):
-    d = get_data(symbol)
-    if not d:
-        return f"⚠️ {symbol} 無數據"
+    price, change, rsi, macd, signal, support, resistance = get_data(symbol)
 
-    price, change, rsi, macd, signal, support, resistance = d
+    prob, action = ai_predict(price, rsi, macd, signal, support, resistance)
 
-    trend = "📈 上升" if macd > signal else "📉 下降"
+    trend = "📈 上升" if change>0 else "📉 下跌"
+    macd_text = "🟢黃金交叉" if macd>signal else "🔴死亡交叉"
 
-    rsi_text = "🟢 超賣" if rsi<30 else "🔴 超買" if rsi>70 else "⚪ 正常"
-    macd_text = "🟢 黃金交叉" if macd>signal else "🔴 死亡交叉"
-
-    prob = ai_probability(rsi,macd,signal,price,support,resistance)
-
-    # ===== 突破 alert =====
+    # 突破 alert
     alert=""
     if price > resistance:
-        alert="🚀 突破阻力（可能爆升）"
-    elif price < support:
-        alert="⚠️ 跌穿支撐（風險高）"
+        if last_alert.get(symbol)!="break":
+            alert="🚀 突破阻力（強勢）"
+            send(f"🚨 {symbol} 突破阻力！")
+            last_alert[symbol]="break"
 
-    # ===== 波段策略 =====
-    entry, stop, target = strategy(price,support,resistance)
+    if price < support:
+        if last_alert.get(symbol)!="breakdown":
+            alert="⚠️ 跌穿支撐（危險）"
+            send(f"🚨 {symbol} 跌穿支撐！")
+            last_alert[symbol]="breakdown"
 
-    msg=f"""📊【{symbol} 即時分析】
+    msg=f"""📊【{symbol} AI交易】
 
-💰 價格：${price:.2f}
-📊 24H：{change:.2f}%
+💰 價格：{price:.2f}
+📊 變幅：{change:.2f}%
 
 {trend}
-RSI：{rsi:.1f} {rsi_text}
+RSI：{rsi:.1f}
 MACD：{macd_text}
 
 🧠 上升機率：{prob}%
-
-🎯 波段策略
-入場：{entry:.2f}
-止蝕：{stop:.2f}
-目標：{target:.2f}
+👉 {action}
 
 📉 支撐：{support:.2f}
 📈 阻力：{resistance:.2f}
+
+💰 策略
+入場：{support:.2f}
+止蝕：{support*0.97:.2f}
 """
 
-    if alert:
-        msg += f"\n{alert}"
-
-    msg += "\n" + get_news()
+    msg += get_news(symbol)
 
     return msg
-
-# ======================
-# 📩 SEND
-# ======================
-def send(text):
-    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                  json={"chat_id":CHAT_ID,"text":text})
 
 # ======================
 # ⏰ AUTO PUSH
 # ======================
 def auto_push():
     while True:
-        for s in stocks:
-            send(build(s))
+        try:
+            for s in SYMBOLS:
+                send(build(s))
+        except:
+            pass
         time.sleep(1800)
+
+threading.Thread(target=auto_push, daemon=True).start()
 
 # ======================
 # 🌐 WEBHOOK
 # ======================
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "OK"
-
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    data = request.get_json(force=True)
+    data=request.get_json()
 
     if "message" not in data:
         return "ok"
 
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text","")
+    text=data["message"].get("text","")
+
+    if text=="/start":
+        send("""🚀 AI交易Bot
+
+/check → 全部分析
+/check TSLA / NVDA / AMD
+
+🔥 自動推送 + 突破alert
+""")
 
     if text.startswith("/check"):
-        args = text.split()
-        if len(args)>1:
-            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                          json={"chat_id":chat_id,"text":build(args[1].upper())})
-        else:
-            for s in stocks:
-                requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                              json={"chat_id":chat_id,"text":build(s)})
+        for s in SYMBOLS:
+            send(build(s))
 
     return "ok"
 
-# ======================
-# 🚀 RUN
-# ======================
-if __name__ == "__main__":
-    threading.Thread(target=auto_push, daemon=True).start()
+@app.route("/")
+def home():
+    return "running"
 
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+# ======================
+# RUN
+# ======================
+if __name__=="__main__":
+    app.run(host="0.0.0.0", port=10000)
