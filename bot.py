@@ -168,7 +168,13 @@ MACD：{macd_text}
 def send(msg):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+        requests.post(
+    url,
+    json={
+        "chat_id": CHAT_ID,
+        "text": msg
+    }
+)
     except:
         print("❌ send fail")
 
