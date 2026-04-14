@@ -1,167 +1,219 @@
+import os, asyncio, requests, yfinance as yf, json, time
 from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-import yfinance as yf
-import requests, os, time, asyncio
-from ta.momentum import RSIIndicator
-from ta.trend import MACD
-
 # ======================
-# 🔑 ENV（一定要用 Render 設定）
+# 🔑 ENV
 # ======================
 TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+RENDER_URL = os.getenv("RENDER_URL")
 NEWS_API = os.getenv("NEWS_API")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 bot = Bot(token=TOKEN)
-app = Flask(__name__)
 
-stocks = ["TSLA", "NVDA", "AMD"]
+stocks = ["TSLA","NVDA","AMD"]
 
 # ======================
-# 📊 股票數據
+# 📂 learning data
 # ======================
-def get_stock(s):
-    df = yf.download(s, period="2d", interval="5m")
-    df = df.dropna()
+DATA_FILE = "data.json"
+
+def load_data():
+    try:
+        return json.load(open(DATA_FILE))
+    except:
+        return {"wins":0,"loss":0,"threshold":70,"positions":{}}
+
+def save_data(data):
+    json.dump(data, open(DATA_FILE,"w"))
+
+data_store = load_data()
+
+# ======================
+# 📊 DATA
+# ======================
+def get_data(symbol):
+    df = yf.download(symbol, period="5d", interval="15m").dropna()
     close = df["Close"]
 
     price = close.iloc[-1]
-    change = ((price - close.iloc[0]) / close.iloc[0]) * 100
 
-    rsi = RSIIndicator(close).rsi().iloc[-1]
+    # RSI
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = -delta.clip(upper=0).rolling(14).mean()
+    rs = gain / loss
+    rsi = 100 - (100/(1+rs))
+    rsi = rsi.iloc[-1]
 
-    macd = MACD(close)
-    macd_val = macd.macd().iloc[-1]
-    signal = macd.macd_signal().iloc[-1]
+    # MACD
+    ema12 = close.ewm(span=12).mean()
+    ema26 = close.ewm(span=26).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9).mean()
 
-    return df, price, change, rsi, macd_val, signal
+    macd_val = macd.iloc[-1]
+    signal_val = signal.iloc[-1]
+
+    support = close.tail(50).min()
+    resistance = close.tail(50).max()
+
+    return price, rsi, macd_val, signal_val, support, resistance
 
 # ======================
-# 🧠 AI評分
+# 🧠 AI score（會學習）
 # ======================
-def ai_score(rsi, macd, signal):
+def ai_score(rsi, macd, signal, price, support, resistance):
     score = 50
 
     if rsi < 30: score += 20
-    if rsi > 70: score -= 20
+    elif rsi > 70: score -= 20
+
     if macd > signal: score += 15
     else: score -= 15
 
-    return max(0, min(100, score))
+    if price < support*1.02: score += 10
+    if price > resistance*0.98: score -= 10
+
+    # 🧠 learning權重
+    winrate = data_store["wins"] / max(1,(data_store["wins"]+data_store["loss"]))
+    score += (winrate-0.5)*20
+
+    return max(0,min(100,score))
 
 # ======================
-# 📰 中文新聞
+# 💰 profit tracking
 # ======================
-def translate(text):
+def trade(symbol, price, action):
+    pos = data_store["positions"]
+
+    if action=="BUY":
+        pos[symbol]=price
+        save_data(data_store)
+        return f"🟢 買入 {symbol} @ {price:.2f}"
+
+    if action=="SELL" and symbol in pos:
+        entry = pos.pop(symbol)
+        profit = (price-entry)/entry*100
+
+        if profit>0: data_store["wins"]+=1
+        else: data_store["loss"]+=1
+
+        save_data(data_store)
+
+        return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
+
+# ======================
+# 📰 新聞 + 中文
+# ======================
+def get_news(symbol):
     try:
-        url = f"https://api.mymemory.translated.net/get?q={text}&langpair=en|zh"
-        return requests.get(url).json()["responseData"]["translatedText"]
-    except:
-        return text
+        url=f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
+        res=requests.get(url).json()
+        articles=res.get("articles",[])[:3]
 
-def get_news(s):
-    try:
-        url = f"https://newsapi.org/v2/everything?q={s}&apiKey={NEWS_API}"
-        data = requests.get(url).json()
-
-        articles = data.get("articles", [])[:2]
-
-        text = "\n📰 市場新聞：\n"
+        text="\n📰 市場新聞\n"
         for a in articles:
-            zh = translate(a["title"])
-            text += f"• {zh}\n"
+            title=a["title"]
+
+            # 簡單翻譯（AI感）
+            zh = title.replace("Tesla","特斯拉").replace("Nvidia","英偉達")
+
+            text+=f"• {zh}\n"
 
         return text
     except:
         return ""
 
 # ======================
-# 📦 訊息
+# 📦 message
 # ======================
-def build_msg(s):
-    df, price, change, rsi, macd, signal = get_stock(s)
+def build(symbol):
+    price,rsi,macd,signal,support,resistance=get_data(symbol)
+    score=ai_score(rsi,macd,signal,price,support,resistance)
 
-    score = ai_score(rsi, macd, signal)
+    msg=f"""📊【{symbol} AI交易】
 
-    msg = f"""📊【{s}】
+💰 價格：{price:.2f}
+🧠 AI評分：{score:.0f}/100
 
-💰 ${price:.2f} ({change:+.2f}%)
+RSI：{rsi:.1f}
+MACD：{"🟢" if macd>signal else "🔴"}
 
-📈 RSI：{rsi:.1f}
-📊 MACD：{"🟢" if macd>signal else "🔴"}
-
-🧠 AI評分：{score}/100
+📉 支撐：{support:.2f}
+📈 阻力：{resistance:.2f}
 """
 
-    msg += get_news(s)
+    threshold=data_store["threshold"]
+
+    if score>=threshold:
+        msg+="\n🟢 買入訊號"
+        trade_msg=trade(symbol,price,"BUY")
+        if trade_msg: msg+="\n"+trade_msg
+
+    elif score<=100-threshold:
+        msg+="\n🔴 賣出訊號"
+        trade_msg=trade(symbol,price,"SELL")
+        if trade_msg: msg+="\n"+trade_msg
+
+    else:
+        msg+="\n⚪ 觀望"
+
+    msg+=get_news(symbol)
 
     return msg
 
 # ======================
-# 🤖 指令
+# 🤖 command
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-"""🤖 AI Trading Bot
-
-/check → 分析股票
-"""
-)
+    await update.message.reply_text("🚀 AI交易Bot已啟動\n/check 查看")
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 分析中（幾秒）...")
+    args=context.args
 
-    asyncio.create_task(run_analysis(update))
+    if args:
+        await update.message.reply_text(build(args[0].upper()))
+    else:
+        for s in stocks:
+            await update.message.reply_text(build(s))
 
-async def run_analysis(update):
-    for s in stocks:
-        try:
-            msg = build_msg(s)
-            await update.message.reply_text(msg)
-            await asyncio.sleep(1)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
-
-# ======================
-# ⚙️ Telegram
-# ======================
-application = ApplicationBuilder().token(TOKEN).build()
-
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("check", check))
-
-# 🔥 初始化（超重要）
-async def init():
-    await application.initialize()
-    await application.start()
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    w=data_store["wins"]
+    l=data_store["loss"]
+    rate=w/max(1,(w+l))*100
+    await update.message.reply_text(f"📊 勝率 {rate:.1f}% ({w}W/{l}L)")
 
 # ======================
-# 🌐 Webhook（重點）
+# telegram
 # ======================
-@app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, bot)
+app_tg=ApplicationBuilder().token(TOKEN).build()
+app_tg.add_handler(CommandHandler("start", start))
+app_tg.add_handler(CommandHandler("check", check))
+app_tg.add_handler(CommandHandler("stats", stats))
 
-    await application.process_update(update)
-
-    return "ok"
+# ======================
+# flask webhook
+# ======================
+app=Flask(__name__)
 
 @app.route("/")
 def home():
-    return "AI Bot Running 🚀"
+    return "running"
+
+@app.route(f"/{TOKEN}",methods=["POST"])
+def hook():
+    update=Update.de_json(request.get_json(force=True),bot)
+    asyncio.run(app_tg.process_update(update))
+    return "ok"
+
+async def set_hook():
+    await bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
 
 # ======================
-# 🚀 啟動
+# run
 # ======================
-if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(init())
-
-    bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
-
-    app.run(host="0.0.0.0", port=10000)
+if __name__=="__main__":
+    asyncio.run(set_hook())
+    app.run(host="0.0.0.0",port=10000)
