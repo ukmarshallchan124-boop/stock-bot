@@ -1,4 +1,4 @@
-import os, json, requests, yfinance as yf
+import os, json, requests, yfinance as yf, asyncio, time
 from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -9,7 +9,6 @@ RENDER_URL = os.getenv("RENDER_URL")
 NEWS_API = os.getenv("NEWS_API")
 
 bot = Bot(token=TOKEN)
-
 stocks = ["TSLA","NVDA","AMD"]
 
 # ========= DATA =========
@@ -172,15 +171,23 @@ def webhook():
 
     return "ok"
 
-# ========= RUN =========
+# ========= 啟動 =========
 def start_bot():
-    import asyncio
-
     async def setup():
         await app_tg.initialize()
         await app_tg.start()
-        await bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
-        print("✅ webhook ready")
+
+        # 🔥 自動 retry webhook（超穩定）
+        for i in range(5):
+            try:
+                print(f"⏳ 設定 webhook...第{i+1}次")
+                await asyncio.sleep(3)
+                await bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
+                print("✅ webhook 成功")
+                break
+            except Exception as e:
+                print("❌ webhook 失敗", e)
+                await asyncio.sleep(2)
 
     asyncio.run(setup())
 
