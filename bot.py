@@ -1,4 +1,4 @@
-import os, asyncio, requests, yfinance as yf, json
+import os, requests, yfinance as yf, json, asyncio
 from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -15,7 +15,7 @@ bot = Bot(token=TOKEN)
 stocks = ["TSLA","NVDA","AMD"]
 
 # ======================
-# 📂 learning data
+# 📂 DATA
 # ======================
 DATA_FILE = "data.json"
 
@@ -31,7 +31,7 @@ def save_data(data):
 data_store = load_data()
 
 # ======================
-# 📊 DATA
+# 📊 MARKET DATA
 # ======================
 def get_data(symbol):
     df = yf.download(symbol, period="5d", interval="15m").dropna()
@@ -51,16 +51,10 @@ def get_data(symbol):
     macd = ema12 - ema26
     signal = macd.ewm(span=9).mean()
 
-    macd_val = macd.iloc[-1]
-    signal_val = signal.iloc[-1]
-
-    support = close.tail(50).min()
-    resistance = close.tail(50).max()
-
-    return price, rsi, macd_val, signal_val, support, resistance
+    return price, rsi, macd.iloc[-1], signal.iloc[-1], close.tail(50).min(), close.tail(50).max()
 
 # ======================
-# 🧠 AI score
+# 🧠 AI SCORE
 # ======================
 def ai_score(rsi, macd, signal, price, support, resistance):
     score = 50
@@ -80,7 +74,7 @@ def ai_score(rsi, macd, signal, price, support, resistance):
     return max(0,min(100,score))
 
 # ======================
-# 💰 trade tracking
+# 💰 TRADE TRACKING
 # ======================
 def trade(symbol, price, action):
     pos = data_store["positions"]
@@ -102,7 +96,7 @@ def trade(symbol, price, action):
         return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
 
 # ======================
-# 📰 news
+# 📰 NEWS
 # ======================
 def get_news(symbol):
     try:
@@ -112,15 +106,14 @@ def get_news(symbol):
 
         text="\n📰 市場新聞\n"
         for a in articles:
-            title=a["title"]
-            text+=f"• {title}\n"
+            text+=f"• {a['title']}\n"
 
         return text
     except:
         return ""
 
 # ======================
-# 📦 message
+# 📦 BUILD MESSAGE
 # ======================
 def build(symbol):
     price,rsi,macd,signal,support,resistance=get_data(symbol)
@@ -158,10 +151,17 @@ MACD：{"🟢" if macd>signal else "🔴"}
     return msg
 
 # ======================
-# 🤖 commands
+# 🤖 COMMANDS
 # ======================
+app_tg = ApplicationBuilder().token(TOKEN).build()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 AI交易Bot已啟動\n/check 查看")
+    await update.message.reply_text(
+        "🚀 AI Trading Bot\n\n"
+        "/check → 全部\n"
+        "/check TSLA → 單隻\n"
+        "/stats → 勝率"
+    )
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args=context.args
@@ -178,44 +178,31 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rate=w/max(1,(w+l))*100
     await update.message.reply_text(f"📊 勝率 {rate:.1f}% ({w}W/{l}L)")
 
-# ======================
-# telegram app
-# ======================
-app_tg=ApplicationBuilder().token(TOKEN).build()
 app_tg.add_handler(CommandHandler("start", start))
 app_tg.add_handler(CommandHandler("check", check))
 app_tg.add_handler(CommandHandler("stats", stats))
 
 # ======================
-# flask webhook（🔥已修）
+# 🌐 FLASK WEBHOOK（穩定版）
 # ======================
-app=Flask(__name__)
+app = Flask(__name__)
 
 @app.route("/")
 def home():
     return "running"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
-def hook():
-    print("🔥 收到 Telegram update")
-
-    update = Update.de_json(request.get_json(force=True), bot)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(app_tg.process_update(update))
-    loop.close()
-
+def webhook():
+    try:
+        update = Update.de_json(request.get_json(force=True), bot)
+        asyncio.run(app_tg.process_update(update))
+    except Exception as e:
+        print("ERROR:", e)
     return "ok"
 
-async def set_hook():
-    await bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
-
 # ======================
-# run
+# 🚀 START（無 asyncio bug）
 # ======================
-if __name__=="__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(set_hook())
-
+if __name__ == "__main__":
+    requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={RENDER_URL}/{TOKEN}")
     app.run(host="0.0.0.0", port=10000)
