@@ -2,262 +2,239 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 import yfinance as yf
-import time
-import requests
+import time, requests, os, threading, json, random
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
-import threading
-import os
-import random
+from flask import Flask
 
-# ======================
-# 🔑 ENV（⚠️ 記得去 Render 設）
-# ======================
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 NEWS_API = os.getenv("NEWS_API")
 
 stocks = ["TSLA", "NVDA", "AMD"]
-last_signal = {}
+
+DATA_FILE = "ai_memory.json"
+WEIGHT_FILE = "weights.json"
+PROFIT_FILE = "profit.json"
 
 # ======================
-# 🤖 /start
+# 📂 JSON 工具
 # ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = """🤖【Stock Bot 已啟動】
-
-📊 指令：
-/check → 即時分析
-
-💡 功能：
-• 技術分析
-• AI新聞（中文）
-• 買賣提示
-"""
-    await update.message.reply_text(msg)
-
-# ======================
-# 🔍 /check
-# ======================
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for s in stocks:
-        msg = build_message(s, include_news=True)
-        await update.message.reply_text(msg)
-
-# ======================
-# 📊 股票數據（防 rate limit）
-# ======================
-def get_stock_data(symbol):
-    for i in range(3):
-        try:
-            time.sleep(random.uniform(1, 3))  # 🔥 防封
-            df = yf.download(symbol, period="2d", interval="5m")
-            df = df.dropna()
-
-            close = df["Close"].squeeze()
-
-            price = close.iloc[-1]
-            prev = close.iloc[0]
-            change = ((price - prev) / prev) * 100
-
-            rsi = RSIIndicator(close).rsi().iloc[-1]
-
-            macd = MACD(close)
-            macd_val = macd.macd().iloc[-1]
-            signal = macd.macd_signal().iloc[-1]
-
-            return price, change, rsi, macd_val, signal
-
-        except:
-            time.sleep(5)
-
-    raise Exception("❌ 無法取得數據")
-
-# ======================
-# 🧠 分析
-# ======================
-def analyze(rsi, macd, signal):
-    trend = "📈 上升" if macd > signal else "📉 下降"
-
-    if rsi > 70:
-        rsi_text = f"{rsi:.1f} 🔴 過熱"
-        rating = "🔴 唔好追"
-        advice = "避免買入"
-    elif rsi < 30:
-        rsi_text = f"{rsi:.1f} 🟢 超賣"
-        rating = "🟢 可留意"
-        advice = "考慮入場"
-    else:
-        rsi_text = f"{rsi:.1f} ⚪ 正常"
-        rating = "⚪ 中性"
-        advice = "觀望"
-
-    macd_text = "🟢 黃金交叉" if macd > signal else "🔴 死亡交叉"
-
-    return trend, rsi_text, macd_text, rating, advice
-
-# ======================
-# 📰 新聞（已解決亂碼）
-# ======================
-def get_news(symbol):
+def load(file):
     try:
-        url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
-        res = requests.get(url).json()
+        with open(file,"r") as f: return json.load(f)
+    except: return {}
 
-        articles = res.get("articles", [])[:3]
+def save(file,data):
+    with open(file,"w") as f: json.dump(data,f)
 
-        text = "\n📰【市場新聞】\n"
-        score = 0
+# ======================
+# 📊 股票數據
+# ======================
+def get_stock(symbol):
+    df = yf.download(symbol, period="5d", interval="15m")
+    df = df.dropna()
+    close = df["Close"]
 
-        for a in articles:
-            title = a["title"]
+    price = close.iloc[-1]
+    change = ((price - close.iloc[0])/close.iloc[0])*100
 
-            lower = title.lower()
+    rsi = RSIIndicator(close).rsi().iloc[-1]
+    macd = MACD(close)
+    macd_val = macd.macd().iloc[-1]
+    signal = macd.macd_signal().iloc[-1]
 
-            if any(w in lower for w in ["beat", "growth", "surge", "record"]):
-                sentiment = "🟢 利好"
-                score += 1
-            elif any(w in lower for w in ["drop", "fall", "risk", "warn"]):
-                sentiment = "🔴 利淡"
-                score -= 1
-            else:
-                sentiment = "⚪ 中性"
+    return df, price, change, rsi, macd_val, signal
 
-            text += f"• {title}\n{sentiment}\n"
+# ======================
+# 📈 支撐阻力
+# ======================
+def get_sr(df):
+    return df["Low"].tail(50).min(), df["High"].tail(50).max()
 
-        overall = "🟢 偏好" if score > 0 else "🔴 偏淡" if score < 0 else "⚪ 中性"
-        text += f"\n🧠 AI總結：{overall}"
-
-        return text
-
+# ======================
+# 📰 新聞分數
+# ======================
+def news_score(symbol):
+    try:
+        url=f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
+        r=requests.get(url).json()
+        score=0
+        for a in r.get("articles",[])[:2]:
+            t=a["title"].lower()
+            if "growth" in t or "surge" in t: score+=10
+            elif "drop" in t or "risk" in t: score-=10
+        return max(0,min(score,20))
     except:
-        return ""
+        return 10
 
 # ======================
-# 📦 訊息格式（已修復 emoji）
+# ⚙️ 權重
 # ======================
-def build_message(s, include_news=False):
-    price, change, rsi, macd, signal = get_stock_data(s)
-    trend, rsi_text, macd_text, rating, advice = analyze(rsi, macd, signal)
+def get_w(s):
+    w=load(WEIGHT_FILE)
+    if s not in w:
+        w[s]={"rsi":30,"macd":30,"price":20,"news":20}
+        save(WEIGHT_FILE,w)
+    return w[s]
 
-    msg = f"""📊【{s} 即時分析】
-
-💰 價格：${price:.2f}
-📈 24H：{change:+.2f}%
-
-{trend}
-RSI：{rsi_text}
-MACD：{macd_text}
-
-🏷️ 評級：{rating}
-💡 建議：{advice}
-"""
-
-    if include_news:
-        news = get_news(s)
-        if news:
-            msg += news
-
-    return msg
+def adjust_w(s,result):
+    w=load(WEIGHT_FILE)
+    x=w[s]
+    if result=="win":
+        x["macd"]+=2;x["price"]+=1
+    else:
+        x["rsi"]-=2;x["news"]-=1
+    for k in x: x[k]=max(5,min(50,x[k]))
+    w[s]=x;save(WEIGHT_FILE,w)
 
 # ======================
-# 📤 發送（🔥關鍵：用 json）
+# 🧠 AI評分
+# ======================
+def score(s,rsi,macd,signal,change,news):
+    w=get_w(s)
+    sc=0
+
+    if rsi<30: sc+=w["rsi"]
+    elif rsi<50: sc+=w["rsi"]*0.5
+
+    if macd>signal: sc+=w["macd"]
+
+    if change>3: sc+=w["price"]
+    elif change>1: sc+=w["price"]*0.5
+
+    sc+=news*(w["news"]/20)
+
+    return int(sc)
+
+# ======================
+# 💰 PROFIT
+# ======================
+def record_trade(s,p):
+    d=load(PROFIT_FILE)
+    d.setdefault(s,[]).append({"entry":p,"checked":False})
+    save(PROFIT_FILE,d)
+
+def update_profit():
+    d=load(PROFIT_FILE)
+    for s in d:
+        for t in d[s]:
+            if t["checked"]: continue
+            try:
+                df=yf.download(s,period="1d",interval="5m")
+                now=df["Close"].iloc[-1]
+                p=((now-t["entry"])/t["entry"])*100
+                t["profit"]=round(p,2)
+                t["checked"]=True
+                adjust_w(s,"win" if p>0 else "lose")
+            except: pass
+    save(PROFIT_FILE,d)
+
+def stats(s):
+    d=load(PROFIT_FILE)
+    if s not in d: return 0,50,0
+    ps=[t["profit"] for t in d[s] if "profit" in t]
+    if not ps: return 0,50,0
+    avg=round(sum(ps)/len(ps),2)
+    win=int(sum(1 for x in ps if x>0)/len(ps)*100)
+    ml=min(ps)
+    return avg,win,ml
+
+# ======================
+# 🚧 動態門檻
+# ======================
+def threshold(win):
+    if win>=70:return 65
+    elif win>=50:return 70
+    else:return 80
+
+# ======================
+# 📤 send
 # ======================
 def send(msg):
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
-        requests.post(
-            url,
-            json={
-                "chat_id": CHAT_ID,
-                "text": msg
-            }
-        )
-
-    except Exception as e:
-        print("❌ send error:", e)
+    requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        json={"chat_id":CHAT_ID,"text":msg}
+    )
 
 # ======================
-# 🚀 自動推送
+# 🚀 主
 # ======================
 def run():
-    count = 0
-
     while True:
+        update_profit()
+
         for s in stocks:
             try:
-                msg = build_message(s)
+                df,p,ch,rsi,macd,signal=get_stock(s)
+                sup,res=get_sr(df)
+                news=news_score(s)
 
-                # TSLA + NVDA 高頻新聞
-                if s in ["TSLA", "NVDA"]:
-                    msg += get_news(s)
+                sc=score(s,rsi,macd,signal,ch,news)
+                avg,win,ml=stats(s)
+                th=threshold(win)
 
-                send(msg)
+                msg=f"""📊【{s}】
 
-                # 🔔 訊號
-                price, change, rsi, macd, signal = get_stock_data(s)
+💰 ${p:.2f} ({ch:+.2f}%)
+📉 支撐:{sup:.2f}
+📈 阻力:{res:.2f}
 
-                signal_type = None
+🧠 AI:{sc}/100
+📊 勝率:{win}%
+🚧 門檻:{th}
 
-                if rsi < 30 and macd > signal:
-                    signal_type = "BUY"
-                elif rsi > 70 and macd < signal:
-                    signal_type = "SELL"
+💰 平均:{avg}%
+📉 最大虧:{ml}%
+"""
 
-                if signal_type and last_signal.get(s) != signal_type:
-                    last_signal[s] = signal_type
+                if sc>=th:
+                    send(msg)
+                    record_trade(s,p)
 
-                    if signal_type == "BUY":
-                        send(f"🟢 買入訊號！{s}")
-                    elif signal_type == "SELL":
-                        send(f"🔴 賣出訊號！{s}")
+                if p>res:
+                    send(f"🚀 {s} 突破 {res:.2f}")
+                if p<sup:
+                    send(f"⚠️ {s} 跌穿 {sup:.2f}")
+
+                time.sleep(5)
 
             except Exception as e:
-                print("Error:", e)
+                print(e)
 
-        count += 1
-
-        if count % 24 == 0:
-            send("🤖 Bot 運行正常")
-
-        time.sleep(3600)  # 🔥 1小時
+        time.sleep(3600)
 
 # ======================
-# 🤖 Telegram
+# 🤖 telegram
 # ======================
-def start_bot():
-    while True:
-        try:
-            app = ApplicationBuilder().token(TOKEN).build()
+async def start(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 Ready\n/check")
 
-            app.add_handler(CommandHandler("start", start))
-            app.add_handler(CommandHandler("check", check))
+async def check(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Running...")
 
-            print("🤖 Bot 已啟動")
-            app.run_polling()
-
-        except Exception as e:
-            print("❌ Telegram error:", e)
-            time.sleep(10)
+def bot():
+    app=ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start",start))
+    app.add_handler(CommandHandler("check",check))
+    app.run_polling()
 
 # ======================
-# 🌐 Flask（防 sleep）
+# 🌐 防sleep
 # ======================
-from flask import Flask
-
-app = Flask(__name__)
+app=Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot running!"
+    return "OK"
 
-def run_web():
-    app.run(host="0.0.0.0", port=10000)
+def web():
+    port=int(os.environ.get("PORT",10000))
+    app.run(host="0.0.0.0",port=port)
 
 # ======================
-# ▶️ 啟動
+# ▶️ start
 # ======================
 threading.Thread(target=run).start()
-threading.Thread(target=run_web).start()
-start_bot()
+threading.Thread(target=web).start()
+bot()
