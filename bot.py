@@ -7,10 +7,15 @@ import requests
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
 import threading
+import os
+from flask import Flask
 
-TOKEN = "8639199863:AAFX_OYcw772iKhAlVLj3JbiScWtFJZQ4-Y"
-CHAT_ID = "-1003907672498"
-NEWS_API = "60e376f3c4c54b7198c941c3fb96600f"
+# ======================
+# 🔐 ENV
+# ======================
+TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+NEWS_API = os.getenv("NEWS_API")
 
 stocks = ["TSLA", "NVDA", "AMD"]
 last_signal = {}
@@ -25,14 +30,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /check → 即時分析
 
 💡 功能：
-• 技術分析
-• AI新聞（中文）
-• 買賣提示
+• 技術分析 📈
+• AI新聞 📰
+• 買賣提示 🔔
+• 跌幅警報 🚨
 """
     await update.message.reply_text(msg)
 
 # ======================
-# 🔍 /check（最靚版）
+# 🔍 /check（完整詳細版）
 # ======================
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for s in stocks:
@@ -40,13 +46,17 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
 
 # ======================
-# 📊 數據
+# 📊 股票數據（防封版）
 # ======================
 def get_stock_data(symbol):
-    df = yf.download(symbol, period="2d", interval="5m")
-    df = df.dropna()
-
-    close = df["Close"].squeeze()
+    for i in range(3):
+        try:
+            df = yf.download(symbol, period="2d", interval="5m")
+            df = df.dropna()
+            close = df["Close"].squeeze()
+            break
+        except:
+            time.sleep(3)
 
     price = close.iloc[-1]
     prev = close.iloc[0]
@@ -84,46 +94,49 @@ def analyze(rsi, macd, signal):
     return trend, rsi_text, macd_text, rating, advice
 
 # ======================
-# 📰 AI新聞（篩選 + 中文）
+# 📰 AI新聞（篩選）
 # ======================
 def get_news(symbol):
-    url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
-    res = requests.get(url).json()
+    try:
+        url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
+        res = requests.get(url, timeout=10).json()
 
-    articles = res.get("articles", [])[:5]
+        articles = res.get("articles", [])[:5]
 
-    text = "\n📰【市場新聞】\n"
-    score = 0
-    useful = 0
+        text = "\n📰【市場新聞】\n"
+        score = 0
+        useful = 0
 
-    for a in articles:
-        title = a["title"]
-        lower = title.lower()
+        for a in articles:
+            title = a["title"]
+            lower = title.lower()
 
-        # 🔥 AI 判斷
-        if any(w in lower for w in ["beat", "growth", "surge", "record", "strong"]):
-            sentiment = "🟢 利好"
-            score += 1
-            useful += 1
-        elif any(w in lower for w in ["drop", "fall", "risk", "warn", "miss"]):
-            sentiment = "🔴 利淡"
-            score -= 1
-            useful += 1
-        else:
-            continue  # ❌ 中性直接跳過
+            if any(w in lower for w in ["beat","growth","surge","record","strong"]):
+                sentiment = "🟢 利好"
+                score += 1
+                useful += 1
+            elif any(w in lower for w in ["drop","fall","risk","warn","miss"]):
+                sentiment = "🔴 利淡"
+                score -= 1
+                useful += 1
+            else:
+                continue
 
-        text += f"• {title}\n{sentiment}\n"
+            text += f"• {title}\n{sentiment}\n"
 
-    if useful == 0:
+        if useful == 0:
+            return ""
+
+        overall = "🟢 偏好" if score > 0 else "🔴 偏淡"
+        text += f"\n🧠 AI總結：{overall}"
+
+        return text
+
+    except:
         return ""
 
-    overall = "🟢 偏好" if score > 0 else "🔴 偏淡"
-    text += f"\n🧠 AI總結：{overall}"
-
-    return text
-
 # ======================
-# 📦 建立訊息（統一格式）
+# 📦 訊息模板（統一）
 # ======================
 def build_message(s, include_news=False):
     price, change, rsi, macd, signal = get_stock_data(s)
@@ -147,7 +160,7 @@ MACD：{macd_text}
         if news:
             msg += news
 
-    return msg
+    return msg, change, rsi, macd, signal
 
 # ======================
 # 📤 發送
@@ -160,7 +173,7 @@ def send(msg):
         print("❌ send fail")
 
 # ======================
-# 🚀 自動 Bot（高頻 + 篩選）
+# 🚀 自動 Bot（核心）
 # ======================
 def run():
     count = 0
@@ -168,28 +181,20 @@ def run():
     while True:
         for s in stocks:
             try:
-                # 📊 基本分析
-                msg = build_message(s)
+                msg, change, rsi, macd, signal = build_message(s)
 
-                # 🔥 TSLA + NVDA 高頻新聞（有篩選）
+                # 🔥 高頻新聞策略
                 if s in ["TSLA", "NVDA"]:
-                    news = get_news(s)
-                    if news:
-                        msg += news
+                    msg += get_news(s)
 
-                # 💤 AMD 每2次先出一次新聞
-                elif count % 2 == 0:
-                    news = get_news(s)
-                    if news:
-                        msg += news
+                elif s == "AMD" and count % 2 == 0:
+                    msg += get_news(s)
 
                 send(msg)
 
                 # ======================
                 # 🔔 買賣訊號（防重複）
                 # ======================
-                price, change, rsi, macd, signal = get_stock_data(s)
-
                 signal_type = None
 
                 if rsi < 30 and macd > signal:
@@ -205,12 +210,19 @@ def run():
                     elif signal_type == "SELL":
                         send(f"🔴 賣出訊號！{s}")
 
+                # ======================
+                # 🚨 跌幅警報
+                # ======================
+                if change < -3:
+                    send(f"🚨 {s} 跌超過 -3%！")
+
+                time.sleep(5)
+
             except Exception as e:
                 print("Error:", e)
 
         count += 1
 
-        # 💓 心跳
         if count % 30 == 0:
             send("🤖 Bot運行正常")
 
@@ -235,7 +247,20 @@ def start_bot():
             time.sleep(10)
 
 # ======================
-# ▶️ 同時運行
+# 🌐 Flask（防 Render sleep）
 # ======================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot running!"
+
+def run_web():
+    app.run(host="0.0.0.0", port=10000)
+
+# ======================
+# ▶️ 同時運行（重要順序）
+# ======================
+threading.Thread(target=run_web).start()
 threading.Thread(target=run).start()
 start_bot()
