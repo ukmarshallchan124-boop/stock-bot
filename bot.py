@@ -1,18 +1,11 @@
-import os, requests, yfinance as yf, json
+import os, requests, yfinance as yf, json, time, threading
 from flask import Flask, request
 
-# ======================
-# 🔑 ENV
-# ======================
 TOKEN = os.getenv("TOKEN")
-RENDER_URL = os.getenv("RENDER_URL")
 NEWS_API = os.getenv("NEWS_API")
 
 stocks = ["TSLA","NVDA","AMD"]
 
-# ======================
-# 📂 learning data
-# ======================
 DATA_FILE = "data.json"
 
 def load_data():
@@ -27,41 +20,40 @@ def save_data(data):
 data_store = load_data()
 
 # ======================
-# 📊 DATA（防爆版）
+# 📊 DATA
 # ======================
 def get_data(symbol):
     try:
-        df = yf.download(symbol, period="5d", interval="15m").dropna()
+        df = yf.download(symbol, period="5d", interval="15m", progress=False).dropna()
 
         if df.empty:
-            raise Exception("No data")
+            return None
 
         close = df["Close"]
 
-        price = close.iloc[-1]
+        price = float(close.iloc[-1])
 
         delta = close.diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = -delta.clip(upper=0).rolling(14).mean()
         rs = gain / loss
-        rsi = 100 - (100/(1+rs))
-        rsi = rsi.iloc[-1]
+        rsi = float((100 - (100/(1+rs))).iloc[-1])
 
         ema12 = close.ewm(span=12).mean()
         ema26 = close.ewm(span=26).mean()
         macd = ema12 - ema26
         signal = macd.ewm(span=9).mean()
 
-        support = close.tail(50).min()
-        resistance = close.tail(50).max()
+        support = float(close.tail(50).min())
+        resistance = float(close.tail(50).max())
 
-        return price, rsi, macd.iloc[-1], signal.iloc[-1], support, resistance
+        return price, rsi, float(macd.iloc[-1]), float(signal.iloc[-1]), support, resistance
 
     except:
-        return 0,50,0,0,0,0
+        return None
 
 # ======================
-# 🧠 AI score
+# 🧠 AI
 # ======================
 def ai_score(rsi, macd, signal, price, support, resistance):
     score = 50
@@ -81,7 +73,7 @@ def ai_score(rsi, macd, signal, price, support, resistance):
     return max(0,min(100,score))
 
 # ======================
-# 💰 trade tracking
+# 💰 trade
 # ======================
 def trade(symbol, price, action):
     pos = data_store["positions"]
@@ -102,28 +94,34 @@ def trade(symbol, price, action):
         return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
 
 # ======================
-# 📰 news
+# 📰 NEWS
 # ======================
 def get_news(symbol):
     try:
-        url=f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
+        query = f"{symbol} OR SpaceX OR Tesla"
+        url=f"https://newsapi.org/v2/everything?q={query}&apiKey={NEWS_API}"
         res=requests.get(url).json()
         articles=res.get("articles",[])[:3]
 
         text="\n📰 市場新聞\n"
         for a in articles:
-            title=a["title"]
-            text+=f"• {title}\n"
+            text+=f"• {a['title']}\n"
 
         return text
     except:
         return ""
 
 # ======================
-# 📦 message
+# 📦 BUILD
 # ======================
 def build(symbol):
-    price,rsi,macd,signal,support,resistance=get_data(symbol)
+    data = get_data(symbol)
+
+    if data is None:
+        return f"⚠️ {symbol} 暫時無數據"
+
+    price,rsi,macd,signal,support,resistance = data
+
     score=ai_score(rsi,macd,signal,price,support,resistance)
 
     msg=f"""📊【{symbol} AI交易】
@@ -132,7 +130,7 @@ def build(symbol):
 🧠 AI評分：{score:.0f}/100
 
 RSI：{rsi:.1f}
-MACD：{"🟢" if macd>signal else "🔴"}
+MACD：{"🟢" if macd > signal else "🔴"}
 
 📉 支撐：{support:.2f}
 📈 阻力：{resistance:.2f}
@@ -158,14 +156,31 @@ MACD：{"🟢" if macd>signal else "🔴"}
     return msg
 
 # ======================
-# 📩 send message
+# 📩 SEND
 # ======================
 def send(chat_id, text):
     url=f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     requests.post(url, json={"chat_id":chat_id,"text":text})
 
 # ======================
-# 🌐 flask
+# 🤖 AUTO PUSH（每30分鐘🔥）
+# ======================
+CHAT_ID = None
+
+def auto_push():
+    while True:
+        try:
+            if CHAT_ID:
+                for s in stocks:
+                    send(CHAT_ID, "⏰ 半小時更新\n" + build(s))
+            time.sleep(1800)  # 🔥 30分鐘
+        except:
+            time.sleep(1800)
+
+threading.Thread(target=auto_push, daemon=True).start()
+
+# ======================
+# 🌐 FLASK
 # ======================
 app = Flask(__name__)
 
@@ -175,6 +190,8 @@ def home():
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
+    global CHAT_ID
+
     try:
         data = request.get_json(force=True)
 
@@ -182,6 +199,8 @@ def webhook():
             return "ok"
 
         chat_id = data["message"]["chat"]["id"]
+        CHAT_ID = chat_id
+
         text = data["message"].get("text","")
 
         if text == "/start":
@@ -189,19 +208,17 @@ def webhook():
                  "🚀 AI交易Bot\n\n"
                  "/check → 全部分析\n"
                  "/check TSLA → 單隻\n"
-                 "/stats → 勝率")
+                 "/stats → 勝率\n"
+                 "⏰ 每30分鐘自動更新")
 
         elif text.startswith("/check"):
             args = text.split()
 
-            try:
-                if len(args) > 1:
-                    send(chat_id, build(args[1].upper()))
-                else:
-                    for s in stocks:
-                        send(chat_id, build(s))
-            except Exception as e:
-                send(chat_id, f"⚠️ 錯誤：{str(e)}")
+            if len(args) > 1:
+                send(chat_id, build(args[1].upper()))
+            else:
+                for s in stocks:
+                    send(chat_id, build(s))
 
         elif text == "/stats":
             w=data_store["wins"]
@@ -215,7 +232,7 @@ def webhook():
     return "ok"
 
 # ======================
-# 🚀 run（最穩）
+# 🚀 RUN
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
