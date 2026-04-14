@@ -1,4 +1,4 @@
-import os, requests, yfinance as yf, json, time, threading
+import os, json, requests, yfinance as yf, time, threading
 from flask import Flask, request
 
 TOKEN = os.getenv("TOKEN")
@@ -12,7 +12,7 @@ def load_data():
     try:
         return json.load(open(DATA_FILE))
     except:
-        return {"wins":0,"loss":0,"threshold":70,"positions":{}}
+        return {"wins":0,"loss":0,"history":[],"positions":{},"last_news":""}
 
 def save_data(data):
     json.dump(data, open(DATA_FILE,"w"))
@@ -20,17 +20,14 @@ def save_data(data):
 data_store = load_data()
 
 # ======================
-# 📊 FIXED DATA (穩定版)
+# 📊 DATA
 # ======================
 def get_data(symbol):
     try:
-        ticker = yf.Ticker(symbol)
+        df = yf.Ticker(symbol).history(period="5d", interval="1h")
 
-        df = ticker.history(period="5d", interval="1h")
-
-        # fallback
         if df.empty:
-            df = ticker.history(period="1mo", interval="1d")
+            df = yf.Ticker(symbol).history(period="1mo", interval="1d")
 
         if df.empty:
             return None
@@ -55,14 +52,13 @@ def get_data(symbol):
 
         return price, rsi, float(macd.iloc[-1]), float(signal.iloc[-1]), support, resistance
 
-    except Exception as e:
-        print("DATA ERROR:", e)
+    except:
         return None
 
 # ======================
 # 🧠 AI
 # ======================
-def ai_score(rsi, macd, signal, price, support, resistance):
+def ai_score(symbol, rsi, macd, signal):
     score = 50
 
     if rsi < 30: score += 20
@@ -71,50 +67,90 @@ def ai_score(rsi, macd, signal, price, support, resistance):
     if macd > signal: score += 15
     else: score -= 15
 
-    if price < support*1.02: score += 10
-    if price > resistance*0.98: score -= 10
+    for h in data_store["history"]:
+        if h["symbol"] == symbol:
+            if abs(h["rsi"] - rsi) < 5:
+                score += (5 if h["result"]=="win" else -5)
 
     winrate = data_store["wins"] / max(1,(data_store["wins"]+data_store["loss"]))
-    score += (winrate-0.5)*20
+    score += (winrate-0.5)*30
 
     return max(0,min(100,score))
 
 # ======================
-# 💰 trade
+# 💰 TRADE
 # ======================
-def trade(symbol, price, action):
+def check_trade(symbol, price, rsi, macd, signal, support, resistance):
     pos = data_store["positions"]
+    msg = ""
 
-    if action=="BUY":
-        pos[symbol]=price
-        save_data(data_store)
-        return f"🟢 買入 {symbol} @ {price:.2f}"
+    if symbol not in pos:
+        if rsi < 35 and macd > signal and price <= support*1.03:
+            pos[symbol] = price
+            msg = f"🟢 BUY @{price:.2f}"
 
-    if action=="SELL" and symbol in pos:
-        entry = pos.pop(symbol)
-        profit = (price-entry)/entry*100
+    else:
+        entry = pos[symbol]
+        change = (price-entry)/entry*100
 
-        if profit>0: data_store["wins"]+=1
-        else: data_store["loss"]+=1
+        if change >= 8:
+            result="win"
+            msg = f"💰 TAKE PROFIT +{change:.2f}%"
 
-        save_data(data_store)
-        return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
+        elif change <= -5:
+            result="loss"
+            msg = f"🔴 STOP LOSS {change:.2f}%"
+
+        else:
+            result=None
+
+        if result:
+            pos.pop(symbol)
+            data_store["history"].append({"symbol":symbol,"rsi":rsi,"result":result})
+            if result=="win": data_store["wins"]+=1
+            else: data_store["loss"]+=1
+
+    save_data(data_store)
+    return msg
 
 # ======================
-# 📰 NEWS（含SpaceX）
+# 🚀 BREAKOUT
 # ======================
-def get_news(symbol):
+def breakout(price, resistance):
+    if price > resistance * 1.01:
+        return "🚀 突破阻力"
+    return ""
+
+# ======================
+# 🛰️ SpaceX IPO MONITOR（🔥）
+# ======================
+def check_spacex_news():
     try:
-        query = f"{symbol} OR SpaceX OR Tesla"
-        url=f"https://newsapi.org/v2/everything?q={query}&apiKey={NEWS_API}"
+        url=f"https://newsapi.org/v2/everything?q=SpaceX IPO&apiKey={NEWS_API}"
         res=requests.get(url).json()
-        articles=res.get("articles",[])[:3]
 
-        text="\n📰 市場新聞\n"
-        for a in articles:
-            text+=f"• {a['title']}\n"
+        for a in res.get("articles",[])[:5]:
+            title = a["title"]
 
-        return text
+            # 關鍵字
+            if any(k in title.lower() for k in ["ipo","listing","nasdaq","public"]):
+
+                if title != data_store["last_news"]:
+                    data_store["last_news"] = title
+                    save_data(data_store)
+
+                    # 🔥 AI分析影響
+                    impact = "⚠️ 可能影響 Tesla 資金流 / AI板塊"
+
+                    msg = f"""
+🚨【SpaceX IPO ALERT】
+
+📰 {title}
+
+{impact}
+"""
+                    return msg
+        return ""
     except:
         return ""
 
@@ -122,67 +158,66 @@ def get_news(symbol):
 # 📦 BUILD
 # ======================
 def build(symbol):
-    data = get_data(symbol)
+    d = get_data(symbol)
+    if not d:
+        return ""
 
-    if data is None:
-        return f"⚠️ {symbol} 暫時無數據（可能API延遲）"
+    price,rsi,macd,signal,support,resistance = d
 
-    price,rsi,macd,signal,support,resistance = data
+    score = ai_score(symbol,rsi,macd,signal)
 
-    score=ai_score(rsi,macd,signal,price,support,resistance)
+    macd_text = "🟢 黃金交叉" if macd>signal else "🔴 死亡交叉"
 
-    msg=f"""📊【{symbol} AI交易】
+    trade_msg = check_trade(symbol,price,rsi,macd,signal,support,resistance)
+    breakout_msg = breakout(price,resistance)
 
-💰 價格：{price:.2f}
-🧠 AI評分：{score:.0f}/100
+    msg=f"""📊 {symbol}
+💰 {price:.2f}
+🧠 AI：{score:.0f}
 
 RSI：{rsi:.1f}
-MACD：{"🟢" if macd > signal else "🔴"}
-
-📉 支撐：{support:.2f}
-📈 阻力：{resistance:.2f}
+MACD：{macd_text}
 """
 
-    threshold=data_store["threshold"]
+    if breakout_msg:
+        msg += f"\n{breakout_msg}"
 
-    if score>=threshold:
-        msg+="\n🟢 買入訊號"
-        t=trade(symbol,price,"BUY")
-        if t: msg+="\n"+t
+    if trade_msg:
+        msg += f"\n{trade_msg}"
 
-    elif score<=100-threshold:
-        msg+="\n🔴 賣出訊號"
-        t=trade(symbol,price,"SELL")
-        if t: msg+="\n"+t
-
-    else:
-        msg+="\n⚪ 觀望"
-
-    msg+=get_news(symbol)
-
-    return msg
+    return msg if (trade_msg or breakout_msg) else ""
 
 # ======================
 # 📩 SEND
 # ======================
 def send(chat_id, text):
-    url=f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id":chat_id,"text":text})
+    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                  json={"chat_id":chat_id,"text":text})
+
+CHAT_ID=None
 
 # ======================
-# ⏰ AUTO PUSH（30分鐘）
+# ⏰ AUTO PUSH（智能）
 # ======================
-CHAT_ID = None
-
 def auto_push():
+    global CHAT_ID
     while True:
         try:
             if CHAT_ID:
+                # 股票訊號
                 for s in stocks:
-                    send(CHAT_ID, "⏰ 半小時更新\n" + build(s))
-            time.sleep(1800)
+                    msg = build(s)
+                    if msg:
+                        send(CHAT_ID, msg)
+
+                # SpaceX IPO
+                news = check_spacex_news()
+                if news:
+                    send(CHAT_ID, news)
+
         except:
-            time.sleep(1800)
+            pass
+        time.sleep(1800)
 
 threading.Thread(target=auto_push, daemon=True).start()
 
@@ -198,49 +233,19 @@ def home():
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     global CHAT_ID
+    data = request.get_json(force=True)
 
-    try:
-        data = request.get_json(force=True)
+    if "message" not in data:
+        return "ok"
 
-        if "message" not in data:
-            return "ok"
+    CHAT_ID = data["message"]["chat"]["id"]
+    text = data["message"].get("text","")
 
-        chat_id = data["message"]["chat"]["id"]
-        CHAT_ID = chat_id
-
-        text = data["message"].get("text","")
-
-        if text == "/start":
-            send(chat_id,
-                 "🚀 AI交易Bot\n\n"
-                 "/check → 全部分析\n"
-                 "/check TSLA → 單隻\n"
-                 "/stats → 勝率\n"
-                 "⏰ 每30分鐘自動更新")
-
-        elif text.startswith("/check"):
-            args = text.split()
-
-            if len(args) > 1:
-                send(chat_id, build(args[1].upper()))
-            else:
-                for s in stocks:
-                    send(chat_id, build(s))
-
-        elif text == "/stats":
-            w=data_store["wins"]
-            l=data_store["loss"]
-            rate=w/max(1,(w+l))*100
-            send(chat_id, f"📊 勝率 {rate:.1f}% ({w}W/{l}L)")
-
-    except Exception as e:
-        print("ERROR:", e)
+    if text == "/check":
+        for s in stocks:
+            send(CHAT_ID, build(s) or f"{s} 無特別信號")
 
     return "ok"
 
-# ======================
-# 🚀 RUN
-# ======================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=10000)
