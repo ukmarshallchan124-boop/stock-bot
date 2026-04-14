@@ -60,7 +60,7 @@ def get_data(symbol):
     return price, rsi, macd_val, signal_val, support, resistance
 
 # ======================
-# 🧠 AI score（會學習）
+# 🧠 AI score
 # ======================
 def ai_score(rsi, macd, signal, price, support, resistance):
     score = 50
@@ -80,7 +80,7 @@ def ai_score(rsi, macd, signal, price, support, resistance):
     return max(0,min(100,score))
 
 # ======================
-# 💰 profit tracking
+# 💰 trade tracking
 # ======================
 def trade(symbol, price, action):
     pos = data_store["positions"]
@@ -102,7 +102,7 @@ def trade(symbol, price, action):
         return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
 
 # ======================
-# 📰 新聞 + 中文
+# 📰 news
 # ======================
 def get_news(symbol):
     try:
@@ -113,8 +113,7 @@ def get_news(symbol):
         text="\n📰 市場新聞\n"
         for a in articles:
             title=a["title"]
-            zh = title.replace("Tesla","特斯拉").replace("Nvidia","英偉達")
-            text+=f"• {zh}\n"
+            text+=f"• {title}\n"
 
         return text
     except:
@@ -143,13 +142,13 @@ MACD：{"🟢" if macd>signal else "🔴"}
 
     if score>=threshold:
         msg+="\n🟢 買入訊號"
-        trade_msg=trade(symbol,price,"BUY")
-        if trade_msg: msg+="\n"+trade_msg
+        t=trade(symbol,price,"BUY")
+        if t: msg+="\n"+t
 
     elif score<=100-threshold:
         msg+="\n🔴 賣出訊號"
-        trade_msg=trade(symbol,price,"SELL")
-        if trade_msg: msg+="\n"+trade_msg
+        t=trade(symbol,price,"SELL")
+        if t: msg+="\n"+t
 
     else:
         msg+="\n⚪ 觀望"
@@ -159,7 +158,7 @@ MACD：{"🟢" if macd>signal else "🔴"}
     return msg
 
 # ======================
-# 🤖 command
+# 🤖 commands
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚀 AI交易Bot已啟動\n/check 查看")
@@ -180,7 +179,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📊 勝率 {rate:.1f}% ({w}W/{l}L)")
 
 # ======================
-# telegram
+# telegram app
 # ======================
 app_tg=ApplicationBuilder().token(TOKEN).build()
 app_tg.add_handler(CommandHandler("start", start))
@@ -188,20 +187,24 @@ app_tg.add_handler(CommandHandler("check", check))
 app_tg.add_handler(CommandHandler("stats", stats))
 
 # ======================
-# flask webhook
+# flask webhook（🔥已修）
 # ======================
 app=Flask(__name__)
 
 @app.route("/")
 def home():
-    return "alive"
+    return "running"
 
-@app.route(f"/{TOKEN}",methods=["POST"])
+@app.route(f"/{TOKEN}", methods=["POST"])
 def hook():
-    update=Update.de_json(request.get_json(force=True),bot)
+    print("🔥 收到 Telegram update")
 
-    # 🔥 FIX：唔用 asyncio.run
-    asyncio.create_task(app_tg.process_update(update))
+    update = Update.de_json(request.get_json(force=True), bot)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(app_tg.process_update(update))
+    loop.close()
 
     return "ok"
 
@@ -212,5 +215,7 @@ async def set_hook():
 # run
 # ======================
 if __name__=="__main__":
-    asyncio.run(set_hook())
-    app.run(host="0.0.0.0",port=10000)
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(set_hook())
+
+    app.run(host="0.0.0.0", port=10000)
