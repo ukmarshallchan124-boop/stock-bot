@@ -11,7 +11,7 @@ NEWS_API = os.getenv("NEWS_API")
 stocks = ["TSLA","NVDA","AMD"]
 
 # ======================
-# 📂 DATA（AI learning）
+# 📂 learning data
 # ======================
 DATA_FILE = "data.json"
 
@@ -27,30 +27,41 @@ def save_data(data):
 data_store = load_data()
 
 # ======================
-# 📊 MARKET DATA
+# 📊 DATA（防爆版）
 # ======================
 def get_data(symbol):
-    df = yf.download(symbol, period="5d", interval="15m").dropna()
-    close = df["Close"]
+    try:
+        df = yf.download(symbol, period="5d", interval="15m").dropna()
 
-    price = close.iloc[-1]
+        if df.empty:
+            raise Exception("No data")
 
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = -delta.clip(upper=0).rolling(14).mean()
-    rs = gain / loss
-    rsi = 100 - (100/(1+rs))
-    rsi = rsi.iloc[-1]
+        close = df["Close"]
 
-    ema12 = close.ewm(span=12).mean()
-    ema26 = close.ewm(span=26).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9).mean()
+        price = close.iloc[-1]
 
-    return price, rsi, macd.iloc[-1], signal.iloc[-1], close.tail(50).min(), close.tail(50).max()
+        delta = close.diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = -delta.clip(upper=0).rolling(14).mean()
+        rs = gain / loss
+        rsi = 100 - (100/(1+rs))
+        rsi = rsi.iloc[-1]
+
+        ema12 = close.ewm(span=12).mean()
+        ema26 = close.ewm(span=26).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9).mean()
+
+        support = close.tail(50).min()
+        resistance = close.tail(50).max()
+
+        return price, rsi, macd.iloc[-1], signal.iloc[-1], support, resistance
+
+    except:
+        return 0,50,0,0,0,0
 
 # ======================
-# 🧠 AI SCORE（會學習）
+# 🧠 AI score
 # ======================
 def ai_score(rsi, macd, signal, price, support, resistance):
     score = 50
@@ -70,7 +81,7 @@ def ai_score(rsi, macd, signal, price, support, resistance):
     return max(0,min(100,score))
 
 # ======================
-# 💰 TRADE TRACKING
+# 💰 trade tracking
 # ======================
 def trade(symbol, price, action):
     pos = data_store["positions"]
@@ -88,11 +99,10 @@ def trade(symbol, price, action):
         else: data_store["loss"]+=1
 
         save_data(data_store)
-
         return f"🔴 賣出 {symbol} @ {price:.2f}\n💰 Profit: {profit:.2f}%"
 
 # ======================
-# 📰 NEWS
+# 📰 news
 # ======================
 def get_news(symbol):
     try:
@@ -102,14 +112,15 @@ def get_news(symbol):
 
         text="\n📰 市場新聞\n"
         for a in articles:
-            text+=f"• {a['title']}\n"
+            title=a["title"]
+            text+=f"• {title}\n"
 
         return text
     except:
         return ""
 
 # ======================
-# 📦 BUILD MESSAGE
+# 📦 message
 # ======================
 def build(symbol):
     price,rsi,macd,signal,support,resistance=get_data(symbol)
@@ -147,14 +158,14 @@ MACD：{"🟢" if macd>signal else "🔴"}
     return msg
 
 # ======================
-# 📤 SEND MESSAGE
+# 📩 send message
 # ======================
 def send(chat_id, text):
     url=f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     requests.post(url, json={"chat_id":chat_id,"text":text})
 
 # ======================
-# 🌐 FLASK WEBHOOK（穩定）
+# 🌐 flask
 # ======================
 app = Flask(__name__)
 
@@ -166,6 +177,9 @@ def home():
 def webhook():
     try:
         data = request.get_json(force=True)
+
+        if "message" not in data:
+            return "ok"
 
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text","")
@@ -180,11 +194,14 @@ def webhook():
         elif text.startswith("/check"):
             args = text.split()
 
-            if len(args) > 1:
-                send(chat_id, build(args[1].upper()))
-            else:
-                for s in stocks:
-                    send(chat_id, build(s))
+            try:
+                if len(args) > 1:
+                    send(chat_id, build(args[1].upper()))
+                else:
+                    for s in stocks:
+                        send(chat_id, build(s))
+            except Exception as e:
+                send(chat_id, f"⚠️ 錯誤：{str(e)}")
 
         elif text == "/stats":
             w=data_store["wins"]
@@ -198,10 +215,8 @@ def webhook():
     return "ok"
 
 # ======================
-# 🚀 START
+# 🚀 run（最穩）
 # ======================
 if __name__ == "__main__":
-    # 設 webhook（最穩方法）
-    requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={RENDER_URL}/{TOKEN}")
-
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
