@@ -10,15 +10,13 @@ NEWS_API = os.getenv("NEWS_API")
 
 SYMBOLS = ["TSLA","NVDA","AMD"]
 
-last_alert = {}
-
 # ======================
 # 📩 SEND
 # ======================
-def send(msg):
+def send(chat_id, msg):
     try:
         requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                      json={"chat_id": CHAT_ID, "text": msg})
+                      json={"chat_id": chat_id, "text": msg})
     except:
         pass
 
@@ -26,7 +24,7 @@ def send(msg):
 # 📊 DATA
 # ======================
 def get_data(symbol):
-    df = yf.Ticker(symbol).history(period="2d", interval="5m")
+    df = yf.Ticker(symbol).history(period="5d", interval="5m")
 
     price = df["Close"].iloc[-1]
     prev = df["Close"].iloc[0]
@@ -35,53 +33,69 @@ def get_data(symbol):
     high = df["High"].max()
     low = df["Low"].min()
 
-    # RSI
+    # ===== RSI =====
     delta = df["Close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     rs = gain.rolling(14).mean() / loss.rolling(14).mean()
     rsi = 100-(100/(1+rs))
 
-    # MACD
+    # ===== MACD =====
     ema12 = df["Close"].ewm(span=12).mean()
     ema26 = df["Close"].ewm(span=26).mean()
     macd = ema12-ema26
     signal = macd.ewm(span=9).mean()
 
-    return price, change, rsi.iloc[-1], macd.iloc[-1], signal.iloc[-1], low, high
+    # ===== VWAP =====
+    vwap = (df["Close"]*df["Volume"]).cumsum()/df["Volume"].cumsum()
 
-# ======================
-# 🧠 AI 預測（升級版）
-# ======================
-def ai_predict(price, rsi, macd, signal, support, resistance):
+    # ===== Volume =====
+    vol_ratio = df["Volume"].iloc[-1] / df["Volume"].rolling(20).mean().iloc[-1]
+
+    # ===== 回調 =====
+    pullback = (price-high)/high*100
+
+    # ===== timing（1m 3m 6m）
+    m1 = (df["Close"].iloc[-1] - df["Close"].iloc[-12]) / df["Close"].iloc[-12] * 100
+    m3 = (df["Close"].iloc[-1] - df["Close"].iloc[-36]) / df["Close"].iloc[-36] * 100
+    m6 = (df["Close"].iloc[-1] - df["Close"].iloc[-72]) / df["Close"].iloc[-72] * 100
+
+    # ===== AI =====
     prob = 50
+    if rsi.iloc[-1] < 35: prob += 15
+    if macd.iloc[-1] > signal.iloc[-1]: prob += 15
+    if price > vwap.iloc[-1]: prob += 10
+    if vol_ratio > 1.2: prob += 10
+    prob = max(5,min(95,prob))
 
-    # RSI
-    if rsi < 30: prob += 25
-    elif rsi > 70: prob -= 25
+    # ===== strategy =====
+    entry = low * 1.01
+    stop = low * 0.97
+    target = high * 1.02
+    rr = (target-entry)/(entry-stop)
 
-    # MACD
-    if macd > signal: prob += 20
-    else: prob -= 15
-
-    # 支撐阻力位置
-    if price <= support*1.02: prob += 10
-    if price >= resistance*0.98: prob -= 10
-
-    prob = max(5, min(95, prob))
-
-    # 建議
-    if prob >= 70:
-        action = "🔥 可考慮買入"
-    elif prob <= 35:
-        action = "⚠️ 建議減倉"
-    else:
-        action = "⚪ 觀望"
-
-    return prob, action
+    return {
+        "price":round(price,2),
+        "change":round(change,2),
+        "rsi":round(rsi.iloc[-1],1),
+        "macd":"🟢黃金交叉" if macd.iloc[-1]>signal.iloc[-1] else "🔴死亡交叉",
+        "support":round(low,2),
+        "resistance":round(high,2),
+        "prob":round(prob,0),
+        "vwap":round(vwap.iloc[-1],2),
+        "volume":"🚀放量" if vol_ratio>1.3 else "⚠️縮量",
+        "pullback":round(pullback,2),
+        "entry":round(entry,2),
+        "stop":round(stop,2),
+        "target":round(target,2),
+        "rr":round(rr,2),
+        "m1":round(m1,2),
+        "m3":round(m3,2),
+        "m6":round(m6,2)
+    }
 
 # ======================
-# 📰 新聞 AI
+# 📰 NEWS
 # ======================
 def get_news(symbol):
     try:
@@ -93,13 +107,9 @@ def get_news(symbol):
         for a in data.get("articles",[])[:3]:
             t=a["title"]
 
-            # 情緒判斷
-            if any(x in t.lower() for x in ["surge","beat","growth"]):
-                senti="🟢利好"
-            elif any(x in t.lower() for x in ["drop","fall","risk"]):
-                senti="🔴利淡"
-            else:
-                senti="⚪中性"
+            if "growth" in t.lower(): senti="🟢利好"
+            elif "fall" in t.lower(): senti="🔴利淡"
+            else: senti="⚪中性"
 
             text+=f"• {t}\n{senti}\n"
 
@@ -108,67 +118,55 @@ def get_news(symbol):
         return ""
 
 # ======================
-# 📊 FORMAT
+# 📊 FORMAT（Ultimate）
 # ======================
 def build(symbol):
-    price, change, rsi, macd, signal, support, resistance = get_data(symbol)
+    d=get_data(symbol)
 
-    prob, action = ai_predict(price, rsi, macd, signal, support, resistance)
+    timing=""
+    if d["m1"]<0 and d["m3"]<0 and d["m6"]>0:
+        timing="🔥 回調中（可入場）"
+    elif d["m1"]>0 and d["m3"]>0 and d["m6"]>5:
+        timing="⚠️ 過熱（唔追）"
+    else:
+        timing="⚪ 正常"
 
-    trend = "📈 上升" if change>0 else "📉 下跌"
-    macd_text = "🟢黃金交叉" if macd>signal else "🔴死亡交叉"
+    advice="🔥高勝率" if d["prob"]>70 and d["rr"]>2 else "⚪觀望"
 
-    # 突破 alert
-    alert=""
-    if price > resistance:
-        if last_alert.get(symbol)!="break":
-            alert="🚀 突破阻力（強勢）"
-            send(f"🚨 {symbol} 突破阻力！")
-            last_alert[symbol]="break"
+    msg=f"""📊【{symbol} Ultimate 分析】
 
-    if price < support:
-        if last_alert.get(symbol)!="breakdown":
-            alert="⚠️ 跌穿支撐（危險）"
-            send(f"🚨 {symbol} 跌穿支撐！")
-            last_alert[symbol]="breakdown"
+💰 價格：{d['price']}
+📈 24H：{d['change']}%
 
-    msg=f"""📊【{symbol} AI交易】
+⏱️ 動能
+1m：{d['m1']}%
+3m：{d['m3']}%
+6m：{d['m6']}%
+👉 {timing}
 
-💰 價格：{price:.2f}
-📊 變幅：{change:.2f}%
+RSI：{d['rsi']}
+MACD：{d['macd']}
 
-{trend}
-RSI：{rsi:.1f}
-MACD：{macd_text}
+📊 VWAP：{d['vwap']}
+📊 成交量：{d['volume']}
+📉 回調：{d['pullback']}%
 
-🧠 上升機率：{prob}%
-👉 {action}
+🧠 AI：{d['prob']}%
 
-📉 支撐：{support:.2f}
-📈 阻力：{resistance:.2f}
+📉 支撐：{d['support']}
+📈 阻力：{d['resistance']}
 
 💰 策略
-入場：{support:.2f}
-止蝕：{support*0.97:.2f}
+入場：{d['entry']}
+止蝕：{d['stop']}
+目標：{d['target']}
+
+📊 R/R：{d['rr']}
+📊 評級：{advice}
 """
 
-    msg += get_news(symbol)
-
+    msg+=get_news(symbol)
     return msg
-
-# ======================
-# ⏰ AUTO PUSH
-# ======================
-def auto_push():
-    while True:
-        try:
-            for s in SYMBOLS:
-                send(build(s))
-        except:
-            pass
-        time.sleep(1800)
-
-threading.Thread(target=auto_push, daemon=True).start()
 
 # ======================
 # 🌐 WEBHOOK
@@ -180,20 +178,15 @@ def webhook():
     if "message" not in data:
         return "ok"
 
+    chat_id=data["message"]["chat"]["id"]
     text=data["message"].get("text","")
 
     if text=="/start":
-        send("""🚀 AI交易Bot
+        send(chat_id,"🚀 Ultimate Trading Bot\n\n/check 查看分析")
 
-/check → 全部分析
-/check TSLA / NVDA / AMD
-
-🔥 自動推送 + 突破alert
-""")
-
-    if text.startswith("/check"):
+    elif text.startswith("/check"):
         for s in SYMBOLS:
-            send(build(s))
+            send(chat_id,build(s))
 
     return "ok"
 
@@ -202,7 +195,41 @@ def home():
     return "running"
 
 # ======================
+# ⏰ AUTO PUSH（升級）
+# ======================
+def auto_push():
+    while True:
+        try:
+            for s in SYMBOLS:
+                d=get_data(s)
+
+                if d["prob"]>70 and d["rr"]>2:
+                    send(CHAT_ID,f"""🚀【{s} 高勝率入場】
+
+入場：{d['entry']}
+止蝕：{d['stop']}
+目標：{d['target']}
+
+R/R：{d['rr']}
+AI：{d['prob']}%
+""")
+
+            time.sleep(7200)
+
+            summary="📊【市場簡報】\n"
+            for s in SYMBOLS:
+                d=get_data(s)
+                summary+=f"{s} {d['price']} ({d['change']}%)\n"
+
+            send(CHAT_ID,summary)
+
+        except:
+            pass
+
+threading.Thread(target=auto_push,daemon=True).start()
+
+# ======================
 # RUN
 # ======================
 if __name__=="__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0",port=10000)
