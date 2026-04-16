@@ -1,221 +1,258 @@
-import requests
-import pandas as pd
-import time
-import os
-import threading
+from flask import Flask, request
+import requests, os, time, threading
+import yfinance as yf
 
-# =========================
-# CONFIG（Render）
-# =========================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+app = Flask(__name__)
+
+TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 NEWS_API = os.getenv("NEWS_API")
 
-STOCKS = ["TSLA", "NVDA", "AMD"]
-LONG_TERM = ["SPY", "MSFT"]
+SYMBOLS = ["TSLA","NVDA","AMD"]
 
-# =========================
-# TELEGRAM
-# =========================
-def send(msg, chat_id=CHAT_ID):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": chat_id, "text": msg[:4000]})
-    except Exception as e:
-        print("send error:", e)
+last_alert = {}
+msft_last_alert = 0
 
-def get_updates(offset=None):
+# ======================
+# SEND
+# ======================
+def send(chat_id, msg):
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-        res = requests.get(url, params={"offset": offset, "timeout": 10})
-        return res.json()
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                      json={"chat_id": chat_id, "text": msg})
     except:
-        return {}
+        pass
 
-# =========================
-# DATA
-# =========================
+# ======================
+# DATA（修正 float64 問題）
+# ======================
 def get_data(symbol):
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=5m"
-        data = requests.get(url).json()
-        closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-        return pd.Series(closes).dropna()
-    except:
-        return None
+    df = yf.Ticker(symbol).history(period="5d", interval="5m")
 
-# =========================
-# INDICATORS
-# =========================
-def rsi(data):
-    delta = data.diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = -delta.clip(upper=0).rolling(14).mean()
-    rs = gain / loss
-    return (100 - (100 / (1 + rs))).iloc[-1]
+    price = float(df["Close"].iloc[-1])
+    high = float(df["High"].max())
+    low = float(df["Low"].min())
 
-# =========================
-# AI ANALYSIS（核心）
-# =========================
-def analyze_stock(symbol):
-    data = get_data(symbol)
-    if data is None:
-        return f"{symbol} ❌ 無數據"
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
+    rsi = float((100-(100/(1+rs))).iloc[-1])
 
-    price = data.iloc[-1]
-    r = rsi(data)
+    ema12 = df["Close"].ewm(span=12).mean()
+    ema26 = df["Close"].ewm(span=26).mean()
+    macd_line = ema12-ema26
+    signal = macd_line.ewm(span=9).mean()
 
-    support = data.tail(30).min()
-    resistance = data.tail(30).max()
+    macd = "🟢" if macd_line.iloc[-1] > signal.iloc[-1] else "🔴"
 
-    entry_low = support * 1.01
-    entry_high = support * 1.03
-    sl = support * 0.97
-    tp = resistance * 0.97
+    vol = float(df["Volume"].iloc[-1]/df["Volume"].rolling(20).mean().iloc[-1])
 
-    risk = ((entry_high - sl) / entry_high) * 100
-    reward = ((tp - entry_high) / entry_high) * 100
-    rr = reward / risk if risk else 0
+    entry_low = low*1.01
+    entry_high = low*1.03
+    stop = low*0.97
+    target = high*1.02
+    rr = (target-entry_low)/(entry_low-stop)
 
-    score = 0
-    if price > data.mean(): score += 1
-    if r < 35: score += 2
-    if r > 65: score -= 2
+    momentum = (price - df["Close"].iloc[-20]) / df["Close"].iloc[-20] * 100
 
-    if score >= 3:
-        sig = "🚀 強力買入"
-    elif score >= 1:
-        sig = "🟢 入場機會"
-    elif score <= -2:
-        sig = "🔴 過熱"
+    return {
+        "price":round(price,2),
+        "rsi":round(rsi,1),
+        "macd":macd,
+        "volume":round(vol,2),
+        "entry_low":round(entry_low,2),
+        "entry_high":round(entry_high,2),
+        "stop":round(stop,2),
+        "target":round(target,2),
+        "rr":round(rr,2),
+        "momentum":round(momentum,2)
+    }
+
+# ======================
+# WINRATE
+# ======================
+def winrate(d):
+    score=50
+    if d["rsi"]<45: score+=10
+    if d["macd"]=="🟢": score+=15
+    if d["volume"]>1.2: score+=10
+    if d["rr"]>2: score+=15
+    if d["momentum"]>0: score+=10
+    return min(95,max(10,score))
+
+# ======================
+# TIMING
+# ======================
+def timing(d):
+    p=d["price"]
+    if d["entry_low"]<=p<=d["entry_high"]:
+        return "ENTRY"
+    elif p>d["entry_high"]:
+        return "HIGH"
     else:
-        sig = "🟡 觀察"
+        return "WAIT"
 
-    return f"""
-📊 {symbol} | 💰 {price:.2f}
-
-💡 {sig}
-
-📥 Entry: {entry_low:.2f}-{entry_high:.2f}
-🛑 SL: {sl:.2f}
-🎯 TP: {tp:.2f}
-
-🎯 R/R: {rr:.2f}
-
-🧱 支持: {support:.2f}
-🚧 阻力: {resistance:.2f}
-"""
-
-# =========================
-# NEWS
-# =========================
-def get_news():
-    if not NEWS_API:
-        return "❌ 無 NEWS API"
-
+# ======================
+# 📰 NEWS（Yahoo + Reuters via NewsAPI）
+# ======================
+def get_news(symbol):
     try:
-        url = f"https://newsapi.org/v2/top-headlines?category=business&apiKey={NEWS_API}"
+        url = f"https://newsapi.org/v2/everything?q={symbol}&language=en&sortBy=publishedAt&apiKey={NEWS_API}"
         data = requests.get(url).json()
+
         articles = data.get("articles", [])[:3]
 
-        msg = "📰 News\n"
+        news_text = f"\n📰【{symbol} 新聞】\n"
+        score = 0
+
         for a in articles:
-            msg += f"• {a['title']}\n"
+            title = a["title"]
 
-        return msg
+            if any(w in title.lower() for w in ["surge","growth","beat","strong","record"]):
+                sentiment = "🟢 利好"; score+=1
+            elif any(w in title.lower() for w in ["fall","risk","cut","warn","drop"]):
+                sentiment = "🔴 利淡"; score-=1
+            else:
+                sentiment = "⚪ 中性"
+
+            news_text += f"• {title}\n{sentiment}\n"
+
+        summary = "🟢 偏利好" if score>0 else "🔴 偏利淡" if score<0 else "⚪ 中性"
+        news_text += f"\n🧠 新聞總結：{summary}\n"
+
+        return news_text
+
     except:
-        return "❌ News error"
+        return "\n📰 無新聞\n"
 
-# =========================
-# DCA
-# =========================
-def dca(symbol):
-    data = get_data(symbol)
-    if data is None:
-        return ""
+# ======================
+# 🎯 FORMAT（完整顯示）
+# ======================
+def format_output(symbol):
+    d = get_data(symbol)
+    w = winrate(d)
+    t = timing(d)
 
-    r = rsi(data)
+    timing_text = "🔥 入場區" if t=="ENTRY" else "❌ 唔好追" if t=="HIGH" else "🔄 等回調"
+    rsi_text = "🟢 超賣" if d["rsi"]<30 else "🔴 超買" if d["rsi"]>70 else "⚪ 正常"
+    trend = "📈 偏強" if d["macd"]=="🟢" else "📉 偏弱"
 
-    if r < 35:
-        return f"{symbol}: 🟢 平價加碼"
-    elif r > 65:
-        return f"{symbol}: 🔴 停手"
-    return f"{symbol}: 🟡 正常DCA"
+    summary = "🔥 可以考慮入場" if t=="ENTRY" and w>=70 else "❌ 太高唔好追" if t=="HIGH" else "🔄 等回調先"
 
-# =========================
-# ANALYZE ALL
-# =========================
-def full_report():
-    msg = "🚀 AlphaCore v13\n\n"
+    msg = f"""📊【{symbol} 波段分析】
 
-    msg += "🚗 波段\n"
-    for s in STOCKS:
-        msg += analyze_stock(s)
+💰 價格：{d['price']}
 
-    msg += "\n🟩 長線\n"
-    for s in LONG_TERM:
-        msg += dca(s) + "\n"
+🧠 成功率：{w}%
+⏱️ Timing：{timing_text}
 
-    msg += "\n" + get_news()
+{trend}
+RSI：{d['rsi']} {rsi_text}
+MACD：{d['macd']}
 
-    msg += "\n\n📘 🟢入場 🟡觀察 🔴風險 🚀強勢"
+📉 支撐：{d['entry_low']}
+📈 阻力：{d['target']}
 
+💰 策略（重點🔥）
+👉 入場：{d['entry_low']} - {d['entry_high']}
+👉 止蝕：{d['stop']}
+👉 目標：{d['target']}
+
+📊 R/R：{d['rr']}
+
+🧠 總結：
+👉 {summary}
+"""
+
+    msg += get_news(symbol)
     return msg
 
-# =========================
-# MAIN LOOP
-# =========================
-def run():
-    offset = None
-    last_push = 0
-
-    print("🚀 BOT START")
-
-    requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+# ======================
+# 🔔 SIGNAL LOOP
+# ======================
+def loop():
+    global msft_last_alert
 
     while True:
         try:
-            updates = get_updates(offset)
+            for s in SYMBOLS:
+                d=get_data(s)
+                w=winrate(d)
+                t=timing(d)
 
-            for u in updates.get("result", []):
-                offset = u["update_id"] + 1
-                msg = u.get("message", {})
-                text = msg.get("text", "")
-                chat_id = msg.get("chat", {}).get("id")
+                now=time.time()
+                last=last_alert.get(s,0)
 
-                if text == "/check":
-                    send("✅ Bot OK", chat_id)
+                if w>=80 and t!="ENTRY" and now-last>3600:
+                    send(CHAT_ID,f"👀【{s} Setup】\n勝率：{w}%\n等回調：{d['entry_low']} - {d['entry_high']}")
+                    last_alert[s]=now
 
-                elif text == "/ai":
-                    send(full_report(), chat_id)
+                if w>=70 and t=="ENTRY" and now-last>600:
+                    send(CHAT_ID,f"🚀【{s} 入場】\n勝率：{w}%\n入場：{d['entry_low']} - {d['entry_high']}")
+                    last_alert[s]=now
 
-                elif text == "/news":
-                    send(get_news(), chat_id)
+            # MSFT DCA
+            df=yf.Ticker("MSFT").history(period="6mo", interval="1d")
+            price=df["Close"].iloc[-1]
+            m3=(price-df["Close"].iloc[-90])/df["Close"].iloc[-90]*100
 
-                elif text.startswith("/calc"):
-                    try:
-                        send(str(eval(text.replace("/calc",""))), chat_id)
-                    except:
-                        send("❌ error", chat_id)
+            if m3<-5 and time.time()-msft_last_alert>86400:
+                send(CHAT_ID,f"💰【MSFT 加倉】價格：{round(price,2)} 回調：{round(m3,1)}%")
+                msft_last_alert=time.time()
 
-                elif text.startswith("/position"):
-                    try:
-                        _, p, q = text.split()
-                        send(f"💰 {float(p)*float(q)}", chat_id)
-                    except:
-                        send("❌ format", chat_id)
+            time.sleep(300)
 
-            if time.time() - last_push > 600:
-                send(full_report())
-                last_push = time.time()
+        except:
+            pass
 
-        except Exception as e:
-            print("ERROR:", e)
+threading.Thread(target=loop, daemon=True).start()
 
-        time.sleep(2)
+# ======================
+# CALC / POSITION
+# ======================
+def calc_price(x):
+    x=float(x)
+    return f"+10% {round(x*1.1,2)}\n+20% {round(x*1.2,2)}\n-10% {round(x*0.9,2)}"
 
-# =========================
-# START
-# =========================
-if __name__ == "__main__":
-    run()
+def position(symbol, entry):
+    df=yf.Ticker(symbol).history(period="5d", interval="5m")
+    price=df["Close"].iloc[-1]
+    pnl=(price-entry)/entry*100
+    return f"{symbol} 盈虧：{round(pnl,2)}%"
+
+# ======================
+# WEBHOOK
+# ======================
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    data=request.get_json()
+
+    if "message" not in data:
+        return "ok"
+
+    chat_id=data["message"]["chat"]["id"]
+    text=data["message"].get("text","")
+
+    if text=="/check":
+        for s in SYMBOLS:
+            send(chat_id, format_output(s))
+
+    elif text=="/msft":
+        send(chat_id, "💰 MSFT 請等自動 alert")
+
+    elif text.startswith("/calc"):
+        send(chat_id, calc_price(text.split()[1]))
+
+    elif text.startswith("/position"):
+        p=text.split()
+        send(chat_id, position(p[1].upper(), float(p[2])))
+
+    return "ok"
+
+@app.route("/")
+def home():
+    return "running"
+
+if __name__=="__main__":
+    app.run(host="0.0.0.0",port=10000)
