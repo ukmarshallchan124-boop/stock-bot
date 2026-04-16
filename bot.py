@@ -18,17 +18,17 @@ LONG_TERM = ["SPY", "MSFT"]
 last_alert = {}
 
 # =========================
-# FLASK（Render 必備）
+# 🌐 FLASK（Render OK）
 # =========================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ AlphaCore AI v15 Running"
+    return "✅ AlphaCore v2 Running"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # =========================
 # SAFE REQUEST
@@ -59,21 +59,30 @@ def get_data(symbol):
 # INDICATORS
 # =========================
 def calc_rsi(data):
-    delta = data.diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = -delta.clip(upper=0).rolling(14).mean()
-    rs = gain / loss
-    return (100 - (100 / (1 + rs))).iloc[-1]
+    try:
+        delta = data.diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = -delta.clip(upper=0).rolling(14).mean()
+        rs = gain / loss
+        return (100 - (100 / (1 + rs))).iloc[-1]
+    except:
+        return 50
 
 def calc_macd(data):
-    ema12 = data.ewm(span=12).mean()
-    ema26 = data.ewm(span=26).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9).mean()
-    return macd.iloc[-1], signal.iloc[-1]
+    try:
+        ema12 = data.ewm(span=12).mean()
+        ema26 = data.ewm(span=26).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9).mean()
+        return macd.iloc[-1], signal.iloc[-1]
+    except:
+        return 0, 0
 
 def calc_drop(data):
-    return (data.iloc[-1] - data.max()) / data.max() * 100
+    try:
+        return (data.iloc[-1] - data.max()) / data.max() * 100
+    except:
+        return 0
 
 # =========================
 # STRUCTURE / TREND
@@ -82,7 +91,7 @@ def structure(data):
     return "📈 上升結構" if data.iloc[-1] > data.iloc[-3] else "📉 下降結構"
 
 def trend(data):
-    return "📈 上升" if data.iloc[-1] > data.mean() else "📉 下跌"
+    return "📈 上升趨勢" if data.iloc[-1] > data.mean() else "📉 下跌趨勢"
 
 def breakout(data):
     high = data.max()
@@ -90,62 +99,60 @@ def breakout(data):
     price = data.iloc[-1]
 
     if price > high * 0.995:
-        return "🚀 突破阻力（向上爆）"
+        return "🚀 突破阻力（加速區）"
     elif price < low * 1.005:
-        return "💥 跌穿支持（向下爆）"
+        return "💥 跌穿支持（風險區）"
     return "📊 正常波動"
 
 def support_resistance(data):
     return data.min(), data.max()
 
 # =========================
-# DECISION ENGINE
+# 🧠 AI SIGNAL 分級（核心升級）
 # =========================
-def entry_signal(rsi, macd, sig, drop):
-    if drop <= -8 and rsi < 35 and macd > sig:
-        return "🟢🟢 強力入場（超跌反彈）"
-    elif drop <= -5 and rsi < 40:
-        return "🟢 入場機會（回調）"
-    elif rsi > 65:
-        return "🔴 過熱（小心回落）"
-    return "🟡 觀察中"
+def signal_score(rsi, macd, sig, drop, price, sup):
+    score = 0
 
-def action(signal):
-    if "強力" in signal:
-        return "👉 分2注（15–20%）\n👉 再跌再加"
-    elif "入場" in signal:
-        return "👉 小注（10%）\n👉 再跌再加"
-    elif "過熱" in signal:
-        return "👉 唔好追\n👉 可減倉鎖利"
-    return "👉 等待機會"
+    if rsi < 35: score += 2
+    elif rsi < 45: score += 1
 
+    if macd > sig: score += 2
+
+    if drop <= -7: score += 2
+    elif drop <= -4: score += 1
+
+    if abs(price - sup) / sup < 0.03:
+        score += 2
+
+    return score
+
+def signal_level(score):
+    if score >= 6:
+        return "🔥 S級（最佳入場）", "👉 可分2注（15–20%）"
+    elif score >= 4:
+        return "🟢 A級（回調入場）", "👉 小注（10%）"
+    elif score >= 2:
+        return "🟡 B級（觀察）", "👉 等確認"
+    else:
+        return "🔴 C級（風險高）", "👉 唔好入場"
+
+# =========================
+# RR / PROFIT
+# =========================
 def rr():
     risk = 5
     reward = 12
     return reward / risk, risk, reward
 
 def rr_text(rr):
-    if rr >= 2:
-        return "🟢🟢 高質（賺＞蝕）"
-    elif rr >= 1.5:
-        return "🟢 可以"
-    return "🟡 一般"
+    return "🟢 高質" if rr >= 2 else "🟡 一般"
 
 def profit(change):
     if change >= 20:
-        return "💰 +20%（建議鎖利）"
+        return "💰 +20%（鎖利）"
     elif change >= 10:
-        return "🟡 +10%（留意回調）"
+        return "🟡 +10%（留意）"
     return ""
-
-def ai(rsi, struct, breakout):
-    if "突破" in breakout:
-        return "🚀 AI：偏強（Momentum）"
-    if rsi > 70:
-        return "⚠️ AI：過熱"
-    if "下降" in struct:
-        return "📉 AI：偏弱"
-    return "📊 AI：中性"
 
 # =========================
 # NEWS
@@ -156,22 +163,23 @@ def get_news(symbol):
             return []
         url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
         data = safe_request(url)
-        return data.get("articles", [])[:2]
+        return data.get("articles", [])[:2] if data else []
     except:
         return []
 
 def news_sentiment(text):
-    if any(w in text.lower() for w in ["growth","strong","beat"]):
-        return "🟢 利好"
-    if any(w in text.lower() for w in ["drop","miss","cut"]):
-        return "🔴 利淡"
-    return "🟡 中性"
+    text = text.lower()
+    if any(w in text for w in ["growth","strong","beat"]):
+        return "🟢"
+    if any(w in text for w in ["drop","miss","cut"]):
+        return "🔴"
+    return "🟡"
 
 # =========================
 # ALERT CONTROL
 # =========================
-def should_alert(symbol, signal):
-    key = f"{symbol}_{signal}"
+def should_alert(symbol, level):
+    key = f"{symbol}_{level}"
     if key in last_alert:
         return False
     last_alert[key] = True
@@ -182,27 +190,26 @@ def should_alert(symbol, signal):
 # =========================
 def send(msg):
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg}
+        )
     except:
         print("send error")
 
 # =========================
-# MAIN LOOP
+# BOT LOOP
 # =========================
 def bot_loop():
     while True:
         try:
-            msg = "🚀 AlphaCore AI v15（FULL）\n\n"
+            msg = "🚀 AlphaCore v2（AI決策系統）\n\n"
 
-            # ===== 波段 =====
             msg += "🚗 波段交易區\n━━━━━━━━━━━━━━━\n"
 
             for s in STOCKS:
                 data = get_data(s)
-
                 if data is None:
-                    msg += f"{s} ⚠️ 無數據\n"
                     continue
 
                 price = data.iloc[-1]
@@ -215,9 +222,10 @@ def bot_loop():
                 br = breakout(data)
                 sup, res = support_resistance(data)
 
-                signal = entry_signal(rsi, macd, sig, drop)
+                score = signal_score(rsi, macd, sig, drop, price, sup)
+                level, action = signal_level(score)
 
-                if not should_alert(s, signal):
+                if not should_alert(s, level):
                     continue
 
                 rr_val, risk, reward = rr()
@@ -225,49 +233,44 @@ def bot_loop():
                 msg += f"""
 📊 {s} | 💰 {price:.2f}
 
-💡 {signal}
-{action(signal)}
+🔥 信號：{level}
+{action}
+
+📊 RSI {rsi:.1f} | MACD {'上升' if macd>sig else '下降'}
 
 🎯 {rr_text(rr_val)} | R/R 1:{rr_val:.1f}
-⚠️ 風險 -{risk}% | 目標 +{reward}%
+⚠️ -{risk}% / 🎯 +{reward}%
 
 📊 {struct} | {tr}
 📡 {br}
 
 🧱 支持 {sup:.2f} | 阻力 {res:.2f}
 
-🧠 {ai(rsi, struct, br)}
 {profit(drop)}
 """
 
-                news = get_news(s)
-                for n in news:
+                for n in get_news(s):
                     msg += f"📰 {news_sentiment(n['title'])} {n['title']}\n"
 
                 msg += "\n━━━━━━━━━━━━━━━\n"
 
-            # ===== 長線 =====
-            msg += "\n🟩 長線投資（DCA）\n━━━━━━━━━━━━━━━\n"
+            msg += "\n🟩 長線（DCA）\n━━━━━━━━━━━━━━━\n"
             msg += """
-📊 S&P500（SPY）
-👉 每月固定買（DCA）
-👉 跌市加碼（加速累積）
-
-📊 Microsoft（MSFT）
-👉 長線持有
-👉 回調先加倉（唔好追高）
+📊 SPY 👉 每月買
+📊 MSFT 👉 回調先加
 """
 
             send(msg)
 
         except Exception as e:
-            print("main error:", e)
+            print("error:", e)
 
         time.sleep(600)
 
 # =========================
-# START
+# START（關鍵）
 # =========================
 if __name__ == "__main__":
-    threading.Thread(target=bot_loop).start()
-    run_server()
+    threading.Thread(target=run_server).start()
+    time.sleep(3)
+    bot_loop()
