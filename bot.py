@@ -17,39 +17,51 @@ last_alert = {}
 
 @app.route("/")
 def home():
-    return "✅ AlphaCore v2.6 Running"
+    return "✅ AlphaCore Stable Running"
+
+# =========================
+# SAFE REQUEST
+# =========================
+def safe_get(url, params=None):
+    try:
+        return requests.get(url, params=params, timeout=10).json()
+    except:
+        return None
 
 # =========================
 # TELEGRAM
 # =========================
 def send(msg):
     try:
+        if not BOT_TOKEN or not CHAT_ID:
+            print("❌ ENV missing")
+            return
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg}
+            data={"chat_id": CHAT_ID, "text": msg[:4000]}, # 防爆長度
+            timeout=10
         )
-    except:
-        print("send error")
+    except Exception as e:
+        print("send error", e)
 
 def get_updates(offset=None):
-    try:
-        return requests.get(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
-            params={"offset": offset}
-        ).json()
-    except:
-        return {}
+    return safe_get(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
+        {"offset": offset, "timeout": 10}
+    ) or {}
 
 # =========================
 # DATA
 # =========================
 def get_data(symbol):
     try:
-        data = requests.get(
-            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=5m"
-        ).json()
+        data = safe_get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            {"range": "5d", "interval": "5m"}
+        )
         closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-        return pd.Series(closes).dropna()
+        s = pd.Series(closes).dropna()
+        return s if len(s) > 30 else None
     except:
         return None
 
@@ -71,11 +83,11 @@ def macd(data):
     return macd.iloc[-1], signal.iloc[-1]
 
 # =========================
-# CORE ENGINE
+# LOGIC（全部保留）
 # =========================
 def entry_zone(data):
     high = data.max()
-    return high * 0.92, high * 0.97
+    return high*0.92, high*0.97
 
 def support_resistance(data):
     return data.min(), data.max()
@@ -84,33 +96,33 @@ def trend(data):
     return "📈 上升趨勢" if data.iloc[-1] > data.mean() else "📉 下跌趨勢"
 
 def structure(data):
-    return "📈 Higher High" if data.iloc[-1] > data.iloc[-3] else "📉 Lower Low"
+    return "📈 HH" if data.iloc[-1] > data.iloc[-3] else "📉 LL"
 
 def breakout(data):
     p = data.iloc[-1]
     if p > data.max()*0.995:
-        return "🚀 突破阻力（追勢）"
+        return "🚀 突破"
     if p < data.min()*1.005:
-        return "💥 跌穿支持（風險）"
-    return "📊 正常波動"
+        return "💥 跌穿"
+    return "📊 正常"
 
 def signal(rsi_v, macd_v, sig_v, drop):
     if drop < -8 and rsi_v < 35 and macd_v > sig_v:
-        return "🔥 S級（強力反彈位）"
+        return "🔥 S級"
     elif drop < -5 and rsi_v < 45:
-        return "🟢 A級（健康回調）"
+        return "🟢 A級"
     elif rsi_v > 65:
-        return "🔴 過熱（小心回落）"
-    return "🟡 等待中"
+        return "🔴 過熱"
+    return "🟡 等待"
 
 def action(sig):
     if "S級" in sig:
-        return "👉 分2注（15–20%）+ 可加碼"
+        return "👉 15–20%"
     if "A級" in sig:
-        return "👉 小注（10%）+ 等確認"
+        return "👉 10%"
     if "過熱" in sig:
-        return "👉 唔好追 / 可減倉"
-    return "👉 等待機會"
+        return "👉 唔好追"
+    return "👉 等"
 
 def winrate(rsi_v, drop):
     if rsi_v < 35 and drop < -6:
@@ -122,152 +134,101 @@ def winrate(rsi_v, drop):
 def rr():
     return 2.4, 5, 12
 
-# =========================
-# 🧠 智能 DCA（新）
-# =========================
 def dca_signal(data):
     r = rsi(data)
-    drop = (data.iloc[-1] - data.max()) / data.max() * 100
+    drop = (data.iloc[-1]-data.max())/data.max()*100
 
     if r < 35 or drop < -6:
-        return "🟢 平價區（可加碼） 👉 DCA + 加注"
+        return "🟢 加碼"
     elif r > 65:
-        return "🔴 偏高（暫停） 👉 等回調"
-    else:
-        return "🟡 正常區 👉 持續定投"
+        return "🔴 停"
+    return "🟡 定投"
 
 # =========================
-# NEWS
-# =========================
-def get_news(symbol):
-    if not NEWS_API:
-        return []
-    try:
-        data = requests.get(
-            f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
-        ).json()
-        return data.get("articles", [])[:1]
-    except:
-        return []
-
-# =========================
-# ALERT CONTROL
-# =========================
-def should_alert(symbol, sig):
-    key = f"{symbol}_{sig}"
-    if key in last_alert:
-        return False
-    last_alert[key] = True
-    return True
-
-# =========================
-# ANALYZE
+# ANALYZE（防爆）
 # =========================
 def analyze():
-    msg = "🚀 AlphaCore v2.6 FINAL\n\n"
+    try:
+        msg = "🚀 AlphaCore v2.6.1\n\n"
 
-    # ===== 波段 =====
-    msg += "🚗 波段交易區\n━━━━━━━━━━━━━━━\n"
+        for s in STOCKS:
+            data = get_data(s)
+            if data is None:
+                continue
 
-    for s in STOCKS:
-        data = get_data(s)
-        if data is None:
-            continue
+            price = data.iloc[-1]
+            r = rsi(data)
+            m, sig_m = macd(data)
+            drop = (price-data.max())/data.max()*100
 
-        price = data.iloc[-1]
-        r = rsi(data)
-        m, sig_m = macd(data)
-        drop = (price - data.max())/data.max()*100
+            sig = signal(r,m,sig_m,drop)
 
-        ez1, ez2 = entry_zone(data)
-        sup, res = support_resistance(data)
-        sig = signal(r,m,sig_m,drop)
-
-        if not should_alert(s, sig):
-            continue
-
-        rr_val, risk, reward = rr()
-
-        msg += f"""
-📊 {s} | 💰 {price:.2f}
-
-💡 {sig}
-{action(sig)}
-🎯 勝率：約 {winrate(r,drop)}
-
-📥 入場區：{ez1:.2f} - {ez2:.2f}
-
-🎯 R/R 1:{rr_val}
-⚠️ -{risk}% | 🎯 +{reward}%
-
-📊 {trend(data)} | {structure(data)}
-🧱 支持 {sup:.2f} | 阻力 {res:.2f}
-
-🚨 {breakout(data)}
+            msg += f"""
+📊 {s} {price:.2f}
+💡 {sig} {action(sig)}
+🎯 勝率 {winrate(r,drop)}
 """
 
-        for n in get_news(s):
-            msg += f"📰 {n['title']}\n"
+        msg += "\n🟩 DCA\n"
+        for s in LONG_TERM:
+            data = get_data(s)
+            if data is not None:
+                msg += f"{s}: {dca_signal(data)}\n"
 
-        msg += "\n━━━━━━━━━━━━━━━\n"
+        return msg
 
-    # ===== 長線 DCA =====
-    msg += "\n🟩 長線投資（智能DCA）\n━━━━━━━━━━━━━━━\n"
-
-    for s in LONG_TERM:
-        data = get_data(s)
-        if data is None:
-            continue
-
-        msg += f"""
-📊 {s}
-{dca_signal(data)}
-"""
-
-    return msg
+    except Exception as e:
+        print("analyze error", e)
+        return "❌ 分析錯誤"
 
 # =========================
-# COMMAND
+# COMMAND LOOP（修正）
 # =========================
 def command_loop():
     last = None
     while True:
-        updates = get_updates(last)
-        for u in updates.get("result", []):
-            last = u["update_id"] + 1
-            text = u["message"].get("text","")
+        try:
+            updates = get_updates(last)
+            for u in updates.get("result", []):
+                last = u["update_id"] + 1
+                text = u["message"].get("text","")
 
-            if text == "/start":
-                send("✅ AlphaCore 已啟動")
+                if text == "/check":
+                    send(analyze())
 
-            elif text == "/check":
-                send(analyze())
+                elif text.startswith("/calc"):
+                    try:
+                        amt = float(text.split()[1])
+                        send(f"👉 £{amt*0.1:.0f}-{amt*0.2:.0f}")
+                    except:
+                        send("用法 /calc 1000")
 
-            elif text.startswith("/calc"):
-                try:
-                    amt = float(text.split()[1])
-                    send(f"👉 建議入場：£{amt*0.1:.0f} - £{amt*0.2:.0f}")
-                except:
-                    send("用法：/calc 1000")
+                elif text == "/start":
+                    send("✅ Bot Ready")
 
-            elif text == "/position":
-                send("📦 +20% 減倉｜+10% 留意｜未升持有")
+            time.sleep(1)
 
-        time.sleep(2)
+        except Exception as e:
+            print("cmd error", e)
+            time.sleep(5)
 
 # =========================
-# AUTO LOOP
+# AUTO（唔會死）
 # =========================
 def auto():
     while True:
-        send(analyze())
-        time.sleep(600)
+        try:
+            send(analyze())
+            time.sleep(600)
+        except Exception as e:
+            print("auto error", e)
+            time.sleep(10)
 
 # =========================
 # START
 # =========================
 if __name__ == "__main__":
-    threading.Thread(target=auto).start()
-    threading.Thread(target=command_loop).start()
+    threading.Thread(target=auto, daemon=True).start()
+    threading.Thread(target=command_loop, daemon=True).start()
 
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
