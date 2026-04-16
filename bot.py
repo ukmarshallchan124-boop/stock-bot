@@ -22,7 +22,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ AlphaCore v2 Running"
+    return "✅ AlphaCore v2 FULL Running"
 
 # =========================
 # TELEGRAM
@@ -83,7 +83,7 @@ def calc_macd(data):
     return macd.iloc[-1], signal.iloc[-1]
 
 # =========================
-# CORE LOGIC（完整保留）
+# CORE LOGIC
 # =========================
 def entry_zone(data):
     high = data.max()
@@ -126,7 +126,7 @@ def support_resistance(data):
     return data.min(), data.max()
 
 # =========================
-# DCA（智能版）
+# DCA（智能）
 # =========================
 def dca_logic(data):
     price = data.iloc[-1]
@@ -205,7 +205,6 @@ def analyze():
 
         msg += "\n━━━━━━━━━━━━━━━\n"
 
-    # ===== DCA =====
     msg += "\n🟩 長線 DCA\n━━━━━━━━━━━━━━━\n"
 
     for s in LONG_TERM:
@@ -221,11 +220,13 @@ def analyze():
     return msg
 
 # =========================
-# COMMAND LOOP
+# MAIN LOOP（核心）
 # =========================
-def command_loop():
-    print("📩 Command loop running")
+def main_loop():
+    print("🚀 Bot Running")
+
     last = None
+    last_push = 0
 
     while True:
         try:
@@ -235,10 +236,13 @@ def command_loop():
                 last = u["update_id"] + 1
                 text = u["message"].get("text","")
 
-                print("📥 收到:", text)
+                print("📥", text)
 
                 if "/check" in text:
                     send(analyze())
+
+                elif "/start" in text:
+                    send("✅ AlphaCore Bot Ready")
 
                 elif text.startswith("/calc"):
                     try:
@@ -247,33 +251,19 @@ def command_loop():
                     except:
                         send("用法：/calc 1000")
 
-                elif "/start" in text:
-                    send("✅ AlphaCore Bot 已啟動")
+            # 自動推送
+            if time.time() - last_push > 600:
+                send(analyze())
+                last_push = time.time()
 
         except Exception as e:
-            print("command error:", e)
+            print("ERROR:", e)
 
         time.sleep(2)
-
-# =========================
-# AUTO PUSH
-# =========================
-def auto_loop():
-    print("🔁 Auto loop running")
-
-    while True:
-        try:
-            send(analyze())
-        except Exception as e:
-            print("auto error:", e)
-
-        time.sleep(600)
 
 # =========================
 # START
 # =========================
 if __name__ == "__main__":
-    threading.Thread(target=command_loop).start()
-    threading.Thread(target=auto_loop).start()
-
+    threading.Thread(target=main_loop).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
