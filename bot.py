@@ -5,7 +5,7 @@ import yfinance as yf
 app = Flask(__name__)
 
 # ======================
-# ENV（Render）
+# ENV
 # ======================
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -14,7 +14,6 @@ NEWS_API = os.getenv("NEWS_API")
 SYMBOLS = ["TSLA","NVDA","AMD"]
 
 last_alert = {}
-msft_last_alert = 0
 
 # ======================
 # SEND
@@ -34,7 +33,6 @@ def send(chat_id, msg):
 def get_data(symbol):
     try:
         df = yf.Ticker(symbol).history(period="5d", interval="5m")
-
         if df.empty:
             return None
 
@@ -59,15 +57,11 @@ def get_data(symbol):
         # Volume
         vol = float(df["Volume"].iloc[-1]/df["Volume"].rolling(20).mean().iloc[-1])
 
-        # 支撐阻力
-        support = low
-        resistance = high
-
         # 策略
-        entry_low = support*1.01
-        entry_high = support*1.03
-        stop = support*0.97
-        target = resistance*0.97
+        entry_low = low*1.01
+        entry_high = low*1.03
+        stop = low*0.97
+        target = high*0.97
 
         rr = (target-entry_low)/(entry_low-stop) if (entry_low-stop)!=0 else 0
 
@@ -82,6 +76,7 @@ def get_data(symbol):
             "target":round(target,2),
             "rr":round(rr,2)
         }
+
     except Exception as e:
         print("data error:", e)
         return None
@@ -110,26 +105,6 @@ def timing(d):
         return "WAIT"
 
 # ======================
-# NEWS
-# ======================
-def get_news(symbol):
-    if not NEWS_API:
-        return ""
-
-    try:
-        url = f"https://newsapi.org/v2/everything?q={symbol}&language=en&sortBy=publishedAt&apiKey={NEWS_API}"
-        data = requests.get(url).json()
-        articles = data.get("articles", [])[:2]
-
-        text = "\n📰 新聞\n"
-        for a in articles:
-            text += f"• {a['title']}\n"
-
-        return text
-    except:
-        return ""
-
-# ======================
 # FORMAT
 # ======================
 def format_output(symbol):
@@ -141,36 +116,24 @@ def format_output(symbol):
     t = timing(d)
 
     timing_text = "🔥 入場區" if t=="ENTRY" else "❌ 唔好追" if t=="HIGH" else "🔄 等回調"
-    rsi_text = "🟢 超賣" if d["rsi"]<30 else "🔴 超買" if d["rsi"]>70 else "⚪ 正常"
-    trend = "📈 偏強" if d["macd"]=="🟢" else "📉 偏弱"
 
-    msg = f"""📊【{symbol} 波段分析】
+    msg = f"""📊【{symbol}】
 
 💰 價格：{d['price']}
-
 🧠 勝率：{w}%
-⏱️ Timing：{timing_text}
 
-{trend}
-RSI：{d['rsi']} {rsi_text}
-MACD：{d['macd']}
+⏱️ {timing_text}
 
-📉 支撐：{d['entry_low']}
-📈 阻力：{d['target']}
-
-💰 策略
-👉 入場：{d['entry_low']} - {d['entry_high']}
-👉 止蝕：{d['stop']}
-👉 目標：{d['target']}
+📥 入場：{d['entry_low']} - {d['entry_high']}
+🛑 止蝕：{d['stop']}
+🎯 目標：{d['target']}
 
 📊 R/R：{d['rr']}
 """
-
-    msg += get_news(symbol)
     return msg
 
 # ======================
-# ALERT LOOP
+# LOOP（自動推送）
 # ======================
 def loop():
     while True:
@@ -197,27 +160,27 @@ def loop():
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
-# COMMAND
+# WEBHOOK
 # ======================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        data=request.get_json(force=True)
+        data = request.get_json(force=True)
 
         if not data or "message" not in data:
             return "ok"
 
-        chat_id=data["message"]["chat"]["id"]
-        text=data["message"].get("text","")
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text","")
 
-        if text=="/check":
+        if text == "/check":
             for s in SYMBOLS:
                 send(chat_id, format_output(s))
 
         elif text.startswith("/calc"):
             try:
                 x=float(text.split()[1])
-                send(chat_id,f"+10% {round(x*1.1,2)}\n+20% {round(x*1.2,2)}\n-10% {round(x*0.9,2)}")
+                send(chat_id,f"+10% {round(x*1.1,2)}\n+20% {round(x*1.2,2)}")
             except:
                 send(chat_id,"❌ /calc 100")
 
@@ -240,10 +203,3 @@ def webhook():
 @app.route("/")
 def home():
     return "running"
-
-# ======================
-# RUN（Render 修正）
-# ======================
-if __name__=="__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
