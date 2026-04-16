@@ -9,8 +9,11 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 SYMBOLS = ["TSLA","NVDA","AMD"]
 
+last_alert = {}
+msft_last_alert = 0
+
 # ======================
-# 📩 SEND
+# SEND
 # ======================
 def send(chat_id, msg):
     try:
@@ -20,22 +23,19 @@ def send(chat_id, msg):
         pass
 
 # ======================
-# 📊 V8 DATA
+# DATA
 # ======================
 def get_data(symbol):
     df = yf.Ticker(symbol).history(period="5d", interval="5m")
 
     price = df["Close"].iloc[-1]
-    prev = df["Close"].iloc[0]
-    change = (price-prev)/prev*100
-
     high = df["High"].max()
     low = df["Low"].min()
 
     delta = df["Close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    rs = gain.rolling(14).mean() / loss.rolling(14).mean()
+    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
     rsi = 100-(100/(1+rs))
 
     ema12 = df["Close"].ewm(span=12).mean()
@@ -43,205 +43,143 @@ def get_data(symbol):
     macd = ema12-ema26
     signal = macd.ewm(span=9).mean()
 
-    vol_ratio = df["Volume"].iloc[-1] / df["Volume"].rolling(20).mean().iloc[-1]
-    pullback = (price-high)/high*100
+    vol = df["Volume"].iloc[-1]/df["Volume"].rolling(20).mean().iloc[-1]
 
-    entry_low = low * 1.01
-    entry_high = low * 1.03
-    stop = low * 0.97
-    target = high * 1.02
+    entry_low = low*1.01
+    entry_high = low*1.03
+    stop = low*0.97
+    target = high*1.02
     rr = (target-entry_low)/(entry_low-stop)
+
+    momentum = (price - df["Close"].iloc[-20]) / df["Close"].iloc[-20] * 100
 
     return {
         "price":round(price,2),
-        "change":round(change,2),
         "rsi":round(rsi.iloc[-1],1),
-        "macd":"🟢黃金交叉" if macd.iloc[-1]>signal.iloc[-1] else "🔴死亡交叉",
-        "volume":"🚀放量" if vol_ratio>1.3 else "⚠️縮量",
-        "pullback":round(pullback,2),
+        "macd":"🟢" if macd.iloc[-1]>signal.iloc[-1] else "🔴",
+        "volume":vol,
         "entry_low":round(entry_low,2),
         "entry_high":round(entry_high,2),
         "stop":round(stop,2),
         "target":round(target,2),
-        "rr":round(rr,2)
+        "rr":round(rr,2),
+        "momentum":round(momentum,2)
     }
 
 # ======================
-# 🧠 V8 LOGIC
+# WINRATE（升級）
 # ======================
-def calc_winrate(d):
-    score = 50
-    if d["rsi"] < 40: score += 10
-    if "🟢" in d["macd"]: score += 15
-    if "🚀" in d["volume"]: score += 10
-    if -6 < d["pullback"] < -2: score += 15
-    if d["rr"] > 2: score += 15
-    return max(10,min(95,score))
+def winrate(d):
+    score=50
+    if d["rsi"]<45: score+=10
+    if d["macd"]=="🟢": score+=15
+    if d["volume"]>1.2: score+=10
+    if d["rr"]>2: score+=15
+    if d["momentum"]>0: score+=10
+    return min(95,max(10,score))
 
-def entry_logic(d):
-    p = d["price"]
-    if d["entry_low"] <= p <= d["entry_high"]:
-        return "🔥 入場區內"
-    elif p > d["entry_high"]:
-        return "❌ 唔好追"
+# ======================
+# TIMING（升級）
+# ======================
+def timing(d):
+    p=d["price"]
+    if d["entry_low"]<=p<=d["entry_high"]:
+        return "ENTRY"
+    elif p>d["entry_high"]:
+        return "HIGH"
     else:
-        return "🔄 等回調"
+        return "WAIT"
 
-def build(symbol):
-    d=get_data(symbol)
-    winrate=calc_winrate(d)
-    timing=entry_logic(d)
+# ======================
+# SIGNAL LOOP
+# ======================
+def loop():
+    global msft_last_alert
 
-    return f"""📊【{symbol}】
+    while True:
+        try:
+            for s in SYMBOLS:
+                d=get_data(s)
+                w=winrate(d)
+                t=timing(d)
 
-💰 價格：{d['price']}
-📈 24H：{d['change']}%
+                now=time.time()
+                last=last_alert.get(s,0)
 
-🧠 成功率：{winrate}%
-⏱️ Timing：{timing}
+                # SETUP
+                if w>=80 and t!="ENTRY":
+                    if now-last>3600:
+                        send(CHAT_ID,f"""👀【{s} Setup】
 
-RSI：{d['rsi']}
-MACD：{d['macd']}
+🧠 勝率：{w}%
+👉 等回調：{d['entry_low']} - {d['entry_high']}""")
+                        last_alert[s]=now
 
-📉 支撐：{d['entry_low']}
-📈 阻力：{d['target']}
+                # ENTRY
+                if w>=70 and t=="ENTRY":
+                    if now-last>600:
+                        send(CHAT_ID,f"""🚀【{s} 入場】
 
-💰 策略
+🧠 勝率：{w}%
+
 入場：{d['entry_low']} - {d['entry_high']}
 止蝕：{d['stop']}
 目標：{d['target']}
 
-📊 R/R：{d['rr']}
+R/R：{d['rr']}""")
+                        last_alert[s]=now
+
+            # MSFT
+            df=yf.Ticker("MSFT").history(period="6mo", interval="1d")
+            price=df["Close"].iloc[-1]
+            m3=(price-df["Close"].iloc[-90])/df["Close"].iloc[-90]*100
+
+            if m3<-5 and time.time()-msft_last_alert>86400:
+                send(CHAT_ID,f"""💰【MSFT 加倉機會】
+
+價格：{round(price,2)}
+回調：{round(m3,1)}%
+
+👉 可考慮加倉""")
+                msft_last_alert=time.time()
+
+            time.sleep(300)
+
+        except:
+            pass
+
+threading.Thread(target=loop, daemon=True).start()
+
+# ======================
+# CALC
+# ======================
+def calc_price(x):
+    x=float(x)
+    return f"""📊 計算
+
++10% {round(x*1.1,2)}
++20% {round(x*1.2,2)}
+-10% {round(x*0.9,2)}
 """
 
 # ======================
-# 💰 MSFT DCA
+# POSITION（升級）
 # ======================
-def msft_dca():
-    df = yf.Ticker("MSFT").history(period="6mo", interval="1d")
-    price = df["Close"].iloc[-1]
+def position(symbol, entry):
+    df=yf.Ticker(symbol).history(period="5d", interval="5m")
+    price=df["Close"].iloc[-1]
+    pnl=(price-entry)/entry*100
 
-    m1 = (price - df["Close"].iloc[-30]) / df["Close"].iloc[-30] * 100
-    m3 = (price - df["Close"].iloc[-90]) / df["Close"].iloc[-90] * 100
-    m6 = (price - df["Close"].iloc[0]) / df["Close"].iloc[0] * 100
-
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
-    rsi = 100-(100/(1+rs))
-    rsi_val = rsi.iloc[-1]
-
-    if rsi_val < 50:
-        status = "🟢 可加倉"
-        advice = "👉 本月可以加"
-    elif rsi_val < 65:
-        status = "🟡 正常DCA"
-        advice = "👉 分批"
+    if pnl>20:
+        advice="🔥 分批止賺"
+    elif pnl>10:
+        advice="🟢 持有 / 鎖利"
+    elif pnl>0:
+        advice="⚪ 觀察"
+    elif pnl>-5:
+        advice="⚠️ 留意"
     else:
-        status = "🔴 暫停"
-        advice = "👉 等回調"
-
-    return f"""💰【Microsoft DCA】
-
-💰 價格：{round(price,2)}
-
-📊 回調
-1M：{round(m1,1)}%
-3M：{round(m3,1)}%
-6M：{round(m6,1)}%
-
-RSI：{round(rsi_val,1)}
-
-📊 狀態：{status}
-{advice}
-"""
-
-# ======================
-# 🔔 MSFT ALERT
-# ======================
-msft_last_alert = 0
-msft_last_state = ""
-
-def msft_alert():
-    global msft_last_alert, msft_last_state
-
-    df = yf.Ticker("MSFT").history(period="6mo", interval="1d")
-    price = df["Close"].iloc[-1]
-
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
-    rsi = 100-(100/(1+rs))
-    rsi_val = rsi.iloc[-1]
-
-    m3 = (price - df["Close"].iloc[-90]) / df["Close"].iloc[-90] * 100
-
-    if rsi_val < 45 or m3 < -5:
-        state = "BUY"
-    else:
-        state = "WAIT"
-
-    now = time.time()
-
-    if state == "BUY":
-        if now - msft_last_alert > 86400 or msft_last_state != state:
-            send(CHAT_ID, f"""💰【MSFT 加倉機會】
-
-🟢 可加倉
-💰 價格：{round(price,2)}
-
-📊 3M回調：{round(m3,1)}%
-RSI：{round(rsi_val,1)}
-
-👉 建議：可以加倉（DCA）
-""")
-            msft_last_alert = now
-            msft_last_state = state
-
-# ======================
-# 🧮 CALC
-# ======================
-def calc_price(base):
-    base = float(base)
-    return f"""📊【價格計算】
-
-基準價：{base}
-
-📈 上升：
-+10% → {round(base*1.10,2)}
-+15% → {round(base*1.15,2)}
-+20% → {round(base*1.20,2)}
-+25% → {round(base*1.25,2)}
-
-📉 下跌：
--5% → {round(base*0.95,2)}
--10% → {round(base*0.90,2)}
-"""
-
-# ======================
-# 📊 POSITION
-# ======================
-def position_analysis(symbol, entry):
-    df = yf.Ticker(symbol).history(period="5d", interval="5m")
-
-    if df.empty:
-        return "❌ 無數據"
-
-    price = df["Close"].iloc[-1]
-    pnl = (price-entry)/entry*100
-
-    if pnl > 20:
-        advice = "🔥 高盈利 → 分批止賺"
-    elif pnl > 10:
-        advice = "🟢 盈利中 → 持有 / 減倉"
-    elif pnl > 0:
-        advice = "⚪ 小盈利 → 觀察"
-    elif pnl > -5:
-        advice = "⚠️ 輕微虧損"
-    else:
-        advice = "❌ 建議止蝕"
+        advice="❌ 考慮止蝕"
 
     return f"""📊【{symbol} 持倉】
 
@@ -250,25 +188,11 @@ def position_analysis(symbol, entry):
 
 盈虧：{round(pnl,2)}%
 
-📊 建議：
-{advice}
+👉 {advice}
 """
 
 # ======================
-# 🔁 LOOP
-# ======================
-def loop():
-    while True:
-        try:
-            msft_alert()
-            time.sleep(300)
-        except:
-            pass
-
-threading.Thread(target=loop, daemon=True).start()
-
-# ======================
-# 🌐 WEBHOOK
+# WEBHOOK
 # ======================
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -282,20 +206,19 @@ def webhook():
 
     if text=="/check":
         for s in SYMBOLS:
-            send(chat_id,build(s))
-
-    elif text.lower()=="/msft":
-        send(chat_id,msft_dca())
+            send(chat_id,str(get_data(s)))
 
     elif text.startswith("/calc"):
-        parts=text.split()
-        if len(parts)==2:
-            send(chat_id,calc_price(parts[1]))
+        send(chat_id,calc_price(text.split()[1]))
 
     elif text.startswith("/position"):
-        parts=text.split()
-        if len(parts)==3:
-            send(chat_id,position_analysis(parts[1].upper(), float(parts[2])))
+        p=text.split()
+        send(chat_id,position(p[1].upper(),float(p[2])))
+
+    elif text=="/msft":
+        df=yf.Ticker("MSFT").history(period="6mo", interval="1d")
+        price=df["Close"].iloc[-1]
+        send(chat_id,f"MSFT 價格：{round(price,2)}")
 
     return "ok"
 
