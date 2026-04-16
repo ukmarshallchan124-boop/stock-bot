@@ -8,22 +8,19 @@ CHAT_ID = os.getenv("CHAT_ID")
 NEWS_API = os.getenv("NEWS_API")
 
 STOCKS = ["TSLA", "NVDA", "AMD"]
-
-last_alert = {}
+LONG_TERM = ["SPY", "MSFT"]
 
 # =========================
-# SAFE REQUEST（防API死）
+# SAFE REQUEST
 # =========================
 def safe_request(url):
     try:
-        res = requests.get(url, timeout=10)
-        return res.json()
-    except Exception as e:
-        print("Request error:", e)
+        return requests.get(url, timeout=10).json()
+    except:
         return None
 
 # =========================
-# DATA（防crash）
+# DATA
 # =========================
 def get_data(symbol, interval="5m"):
     try:
@@ -31,20 +28,16 @@ def get_data(symbol, interval="5m"):
         data = safe_request(url)
 
         if not data or not data.get("chart") or not data["chart"]["result"]:
-            print(f"{symbol} 無數據")
             return None
 
         closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-
         series = pd.Series(closes).dropna()
 
         if len(series) < 30:
             return None
 
         return series
-
-    except Exception as e:
-        print(f"{symbol} error:", e)
+    except:
         return None
 
 # =========================
@@ -56,9 +49,9 @@ def calc_rsi(data):
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = -delta.clip(upper=0).rolling(14).mean()
         rs = gain / loss
-        return 100 - (100 / (1 + rs))
+        return (100 - (100 / (1 + rs))).iloc[-1]
     except:
-        return pd.Series([50])
+        return 50
 
 def calc_macd(data):
     try:
@@ -72,9 +65,7 @@ def calc_macd(data):
 
 def calc_drop(data):
     try:
-        high = data.max()
-        current = data.iloc[-1]
-        return (current - high) / high * 100
+        return (data.iloc[-1] - data.max()) / data.max() * 100
     except:
         return 0
 
@@ -82,46 +73,44 @@ def calc_drop(data):
 # ANALYSIS
 # =========================
 def structure(data):
-    try:
-        return "📈 上升結構（整體向上）" if data.iloc[-1] > data.iloc[-3] else "📉 下降結構（整體轉弱）"
-    except:
-        return "📊 結構未知"
+    return "📈 上升結構（整體向上）" if data.iloc[-1] > data.iloc[-3] else "📉 下降結構（轉弱）"
 
 def trend(data):
-    try:
-        return "📈 上升趨勢" if data.iloc[-1] > data.mean() else "📉 下跌趨勢"
-    except:
-        return "📊 趨勢未知"
+    return "📈 上升趨勢" if data.iloc[-1] > data.mean() else "📉 下跌趨勢"
 
 def multi_tf(symbol):
     try:
-        short = get_data(symbol, "5m")
-        long = get_data(symbol, "1h")
-
-        if short is None or long is None:
-            return "📊 多時間資料不足"
-
-        if short.iloc[-1] > short.mean() and long.iloc[-1] > long.mean():
-            return "🟢 多時間一致上升（趨勢穩定）"
-        elif short.iloc[-1] < short.mean() and long.iloc[-1] < long.mean():
-            return "🔴 多時間一致下跌（風險高）"
-        return "🟡 分歧（短長線未一致）"
+        s = get_data(symbol, "5m")
+        l = get_data(symbol, "1h")
+        if s is None or l is None:
+            return "📊 多時間不足"
+        if s.iloc[-1] > s.mean() and l.iloc[-1] > l.mean():
+            return "🟢 多時間一致上升"
+        elif s.iloc[-1] < s.mean() and l.iloc[-1] < l.mean():
+            return "🔴 多時間一致下跌"
+        return "🟡 分歧"
     except:
-        return "📊 多時間錯誤"
+        return "📊 錯誤"
+
+def market_state(rsi):
+    if rsi > 65:
+        return "📈 偏強（小心追高）"
+    elif rsi < 35:
+        return "📉 回調區（留意反彈）"
+    return "📊 正常波動"
 
 def breakout(data):
     try:
         high = data.max()
         low = data.min()
         price = data.iloc[-1]
-
         if price > high * 0.995:
-            return "🚀 突破阻力（可能加速上升）"
+            return "🚀 突破阻力"
         elif price < low * 1.005:
-            return "💥 跌穿支持（小心下跌）"
+            return "💥 跌穿支持"
         return "📊 無突破"
     except:
-        return "📊 無法判斷"
+        return ""
 
 def support_resistance(data):
     try:
@@ -134,40 +123,47 @@ def support_resistance(data):
 # =========================
 def entry_signal(rsi, macd, sig, drop):
     if drop <= -8 and rsi < 35 and macd > sig:
-        return "🟢🟢 強力入場（高機會反彈）"
+        return "🟢🟢 強力入場"
     elif drop <= -5 and rsi < 40:
-        return "🟢 入場機會（回調反彈）"
+        return "🟢 入場機會"
     elif rsi > 65:
-        return "🔴 過熱（小心回落）"
+        return "🔴 過熱"
     return "🟡 觀察中"
 
 def action(signal):
     if "強力" in signal:
-        return "👉 分2注（15–20%）\n👉 回調再加"
+        return "👉 分2注（15–20%）"
     elif "入場" in signal:
-        return "👉 小注（10%）\n👉 再跌再加"
+        return "👉 小注（10%）"
     elif "過熱" in signal:
-        return "👉 唔好追\n👉 可減倉"
+        return "👉 唔好追"
     return "👉 等待"
 
 def rr():
-    risk = 5
-    reward = 12
-    return reward / risk, risk, reward
+    return 2.4, 5, 12
 
 def rr_text(rr):
     if rr >= 2:
-        return "🟢🟢 高質（回報大於風險）"
+        return "🟢🟢 高質"
     elif rr >= 1:
         return "🟡 一般"
     return "🔴 低質"
 
-def warning(rsi, drop):
-    if rsi > 70:
-        return "⚠️ 過熱，小心回調"
-    if drop < -10:
-        return "⚠️ 跌勢強，唔好接飛刀"
+def profit(change):
+    if change >= 20:
+        return "💰 +20% 鎖利"
+    elif change >= 10:
+        return "🟡 +10% 留意"
     return ""
+
+def ai(rsi, struct, br):
+    if "突破" in br:
+        return "🚀 AI：偏強"
+    if rsi > 70:
+        return "⚠️ AI：過熱"
+    if "下降" in struct:
+        return "📉 AI：偏弱"
+    return "📊 AI：中性"
 
 # =========================
 # NEWS
@@ -190,93 +186,99 @@ def news_sentiment(text):
     return "🟡 中性"
 
 # =========================
-# SEND（防死）
+# SEND
 # =========================
 def send(msg):
     try:
         if not BOT_TOKEN or not CHAT_ID:
-            print("❌ BOT_TOKEN 或 CHAT_ID 未設定")
+            print("❌ TOKEN 未設")
             return
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except Exception as e:
-        print("Send error:", e)
+    except:
+        pass
 
 # =========================
 # MAIN
 # =========================
 def run():
-    msg = "🚀 AlphaCore AI v∞+（不死版）\n\n🚗 波段交易區\n━━━━━━━━━━━━━━━\n"
+    msg = "🚀 AlphaCore AI v∞++（Ultimate）\n\n"
+
+    # ===== 波段 =====
+    msg += "🚗 波段交易區\n━━━━━━━━━━━━━━━\n"
 
     for s in STOCKS:
         data = get_data(s)
 
         if data is None:
-            msg += f"\n📊 {s}\n⚠️ 無法取得數據\n━━━━━━━━━━━━━━━\n"
+            msg += f"\n📊 {s}\n⚠️ 無數據\n━━━━━━━━━━━━━━━\n"
             continue
 
-        try:
-            price = data.iloc[-1]
-            rsi = calc_rsi(data).iloc[-1]
-            macd, sig = calc_macd(data)
-            drop = calc_drop(data)
+        price = data.iloc[-1]
+        rsi = calc_rsi(data)
+        macd, sig = calc_macd(data)
+        drop = calc_drop(data)
+        change = (price - data.iloc[0]) / data.iloc[0] * 100
 
-            struct = structure(data)
-            tr = trend(data)
-            mtf = multi_tf(s)
-            br = breakout(data)
-            sup, res = support_resistance(data)
+        struct = structure(data)
+        tr = trend(data)
+        mtf = multi_tf(s)
+        ms = market_state(rsi)
+        br = breakout(data)
+        sup, res = support_resistance(data)
 
-            signal = entry_signal(rsi, macd, sig, drop)
-            rr_val, risk, reward = rr()
+        signal = entry_signal(rsi, macd, sig, drop)
+        rr_val, risk, reward = rr()
 
-            msg += f"""
+        msg += f"""
 📊 {s} | 💰 {price:.2f}
 
-💡 交易信號：
-{signal}
+💡 {signal}
 {action(signal)}
 
-🎯 交易質素：
-{rr_text(rr_val)}
+🎯 {rr_text(rr_val)} | R/R 1:{rr_val}
+👉 +{reward}% / -{risk}%
 
-📊 R/R 1:{rr_val:.1f}
-👉 回報 +{reward}%
-👉 風險 -{risk}%
+📊 {struct} | {tr}
+📡 {mtf}
+{ms}
 
-📊 市場情況：
-{struct}
-{tr}
-{mtf}
-
-🚀 關鍵：
 {br}
 
-🧱 支持：{sup:.2f}
-🚧 阻力：{res:.2f}
+🧱 支持 {sup:.2f}
+🚧 阻力 {res:.2f}
 
-{warning(rsi, drop)}
+🧠 {ai(rsi, struct, br)}
+{profit(change)}
 """
 
-            news = get_news(s)
-            for n in news:
-                msg += f"📰 {news_sentiment(n['title'])} {n['title']}\n"
+        news = get_news(s)
+        for n in news:
+            msg += f"📰 {news_sentiment(n['title'])} {n['title']}\n"
 
-            msg += "\n━━━━━━━━━━━━━━━\n"
+        msg += "\n━━━━━━━━━━━━━━━\n"
 
-        except Exception as e:
-            msg += f"\n⚠️ {s} 分析錯誤\n"
-            print("分析錯:", e)
+    # ===== 長線 =====
+    msg += "\n🟩 長線投資區（DCA）\n━━━━━━━━━━━━━━━\n"
+    msg += """
+📊 S&P500（SPY）
+🟢 每月定投
+👉 跌市加碼
+
+📊 Microsoft（MSFT）
+🟡 長線持有
+👉 回調先加
+"""
 
     send(msg)
 
 # =========================
-# LOOP（永遠唔死🔥）
+# LOOP（不死）
 # =========================
 while True:
     try:
         run()
     except Exception as e:
-        print("主程式錯誤:", e)
+        print("主錯誤:", e)
 
     time.sleep(600)
