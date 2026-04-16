@@ -16,35 +16,45 @@ STOCKS = ["TSLA", "NVDA", "AMD"]
 LONG_TERM = ["SPY", "MSFT"]
 
 # =========================
-# FLASK（Render 必須）
+# FLASK
 # =========================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ AlphaCore v2 FULL Running"
+    return "✅ AlphaCore Debug Running"
 
 # =========================
-# TELEGRAM
+# TELEGRAM（加強debug）
 # =========================
 def send(msg):
     try:
-        requests.post(
+        if not BOT_TOKEN or not CHAT_ID:
+            print("❌ ENV missing")
+            return
+
+        res = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg}
+            data={"chat_id": CHAT_ID, "text": msg[:4000]},
+            timeout=10
         )
+
+        print("📤 SEND STATUS:", res.text)
+
     except Exception as e:
-        print("send error:", e)
+        print("❌ send error:", e)
 
 def get_updates(offset=None):
     try:
         res = requests.get(
             f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
-            params={"offset": offset, "timeout": 10}
+            params={"offset": offset, "timeout": 10},
+            timeout=15
         )
-        return res.json()
+        data = res.json()
+        return data
     except Exception as e:
-        print("update error:", e)
+        print("❌ update error:", e)
         return {}
 
 # =========================
@@ -62,7 +72,8 @@ def get_data(symbol):
             return None
 
         return series
-    except:
+    except Exception as e:
+        print(f"❌ data error {symbol}:", e)
         return None
 
 # =========================
@@ -92,29 +103,29 @@ def entry_zone(data):
 def breakout(data):
     p = data.iloc[-1]
     if p > data.max()*0.995:
-        return "🚀 Breakout（追勢）"
+        return "🚀 Breakout"
     if p < data.min()*1.005:
-        return "💥 Breakdown（風險）"
-    return "📊 正常波動"
+        return "💥 Breakdown"
+    return "📊 正常"
 
 def structure(data):
     return "📈 上升結構" if data.iloc[-1] > data.iloc[-3] else "📉 下降結構"
 
 def trend(data):
-    return "📈 上升趨勢" if data.iloc[-1] > data.mean() else "📉 下跌趨勢"
+    return "📈 上升" if data.iloc[-1] > data.mean() else "📉 下跌"
 
 def signal(rsi_v, macd_v, sig_v, drop):
     if drop < -8 and rsi_v < 35 and macd_v > sig_v:
-        return "🔥 S級（強力反彈）"
+        return "🔥 S級"
     elif drop < -5 and rsi_v < 45:
-        return "🟢 A級（回調入場）"
+        return "🟢 A級"
     elif rsi_v > 65:
-        return "🔴 過熱（小心回調）"
+        return "🔴 過熱"
     return "🟡 等待"
 
 def winrate(rsi_v, drop):
     if rsi_v < 35 and drop < -6:
-        return "70–80%"
+        return "70-80%"
     elif rsi_v < 45:
         return "60%"
     return "50%"
@@ -126,17 +137,17 @@ def support_resistance(data):
     return data.min(), data.max()
 
 # =========================
-# DCA（智能）
+# DCA
 # =========================
 def dca_logic(data):
     price = data.iloc[-1]
     drop = (price - data.max()) / data.max() * 100
 
     if drop < -10:
-        return "🟢 加大（市場回調）"
+        return "🟢 加大"
     elif drop < -5:
-        return "🟡 正常買入"
-    return "🔴 等待回調"
+        return "🟡 正常買"
+    return "🔴 等回調"
 
 # =========================
 # NEWS
@@ -146,31 +157,24 @@ def get_news(symbol):
         if not NEWS_API:
             return []
         url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
-        data = requests.get(url).json()
-        return data.get("articles", [])[:2]
+        data = requests.get(url, timeout=10).json()
+        return data.get("articles", [])[:1]
     except:
         return []
-
-def sentiment(text):
-    text = text.lower()
-    if any(w in text for w in ["strong","growth","beat"]):
-        return "🟢"
-    if any(w in text for w in ["drop","miss","cut"]):
-        return "🔴"
-    return "🟡"
 
 # =========================
 # ANALYZE
 # =========================
 def analyze():
-    msg = "🚀 AlphaCore v2 FINAL\n\n"
+    print("📊 analyze running")
 
-    msg += "🚗 波段交易區\n━━━━━━━━━━━━━━━\n"
+    msg = "🚀 AlphaCore Debug\n\n"
 
     for s in STOCKS:
         data = get_data(s)
+
         if data is None:
-            msg += f"{s} ⚠️ 無數據\n"
+            msg += f"{s} ❌ 無數據\n"
             continue
 
         price = data.iloc[-1]
@@ -178,52 +182,26 @@ def analyze():
         m, sig = calc_macd(data)
         drop = (price - data.max())/data.max()*100
 
-        ez1, ez2 = entry_zone(data)
-        sup, res = support_resistance(data)
-
         msg += f"""
-📊 {s} | 💰 {price:.2f}
-
+📊 {s} {price:.2f}
 💡 {signal(r,m,sig,drop)}
-🎯 勝率：約 {winrate(r,drop)}
-
-📥 入場區：
-{ez1:.2f} - {ez2:.2f}
-
-🎯 R/R 1:{rr()[0]}（+{rr()[2]}% / -{rr()[1]}%）
-
-📊 {structure(data)} | {trend(data)}
-🚨 {breakout(data)}
-
-🧱 支持 {sup:.2f}
-🚧 阻力 {res:.2f}
+🎯 勝率 {winrate(r,drop)}
 """
 
-        news = get_news(s)
-        for n in news:
-            msg += f"📰 {sentiment(n['title'])} {n['title']}\n"
-
-        msg += "\n━━━━━━━━━━━━━━━\n"
-
-    msg += "\n🟩 長線 DCA\n━━━━━━━━━━━━━━━\n"
+    msg += "\n🟩 DCA\n"
 
     for s in LONG_TERM:
         data = get_data(s)
-        if data is None:
-            continue
-
-        msg += f"""
-📊 {s}
-👉 {dca_logic(data)}
-"""
+        if data:
+            msg += f"{s}: {dca_logic(data)}\n"
 
     return msg
 
 # =========================
-# MAIN LOOP（核心）
+# MAIN LOOP（關鍵）
 # =========================
 def main_loop():
-    print("🚀 Bot Running")
+    print("🚀 BOT STARTED")
 
     last = None
     last_push = 0
@@ -234,30 +212,25 @@ def main_loop():
 
             for u in updates.get("result", []):
                 last = u["update_id"] + 1
-                text = u["message"].get("text","")
+                text = u["message"].get("text", "")
 
-                print("📥", text)
+                print("📥 收到:", text)
 
                 if "/check" in text:
+                    print("👉 trigger check")
                     send(analyze())
 
                 elif "/start" in text:
-                    send("✅ AlphaCore Bot Ready")
+                    send("✅ Bot Ready")
 
-                elif text.startswith("/calc"):
-                    try:
-                        amt = float(text.split()[1])
-                        send(f"💰 建議分注：{amt*0.1:.0f} - {amt*0.2:.0f}")
-                    except:
-                        send("用法：/calc 1000")
-
-            # 自動推送
+            # auto push
             if time.time() - last_push > 600:
+                print("⏰ auto push")
                 send(analyze())
                 last_push = time.time()
 
         except Exception as e:
-            print("ERROR:", e)
+            print("❌ LOOP ERROR:", e)
 
         time.sleep(2)
 
