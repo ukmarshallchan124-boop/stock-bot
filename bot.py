@@ -11,7 +11,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 NEWS_API = os.getenv("NEWS_API")
 
-SYMBOLS = ["TSLA","NVDA","AMD"]
+SYMBOLS = ["TSLA","NVDA","AMD","MSFT"]
 
 last_alert = {}
 
@@ -57,13 +57,19 @@ def get_data(symbol):
         # Volume
         vol = float(df["Volume"].iloc[-1]/df["Volume"].rolling(20).mean().iloc[-1])
 
-        # 策略
-        entry_low = low*1.01
-        entry_high = low*1.03
-        stop = low*0.97
-        target = high*0.97
+        # Support / Resistance
+        support = low
+        resistance = high
+
+        # Strategy
+        entry_low = support*1.01
+        entry_high = support*1.03
+        stop = support*0.97
+        target = resistance*0.97
 
         rr = (target-entry_low)/(entry_low-stop) if (entry_low-stop)!=0 else 0
+
+        momentum = (price - df["Close"].iloc[-20]) / df["Close"].iloc[-20] * 100
 
         return {
             "price":round(price,2),
@@ -74,7 +80,8 @@ def get_data(symbol):
             "entry_high":round(entry_high,2),
             "stop":round(stop,2),
             "target":round(target,2),
-            "rr":round(rr,2)
+            "rr":round(rr,2),
+            "momentum":round(momentum,2)
         }
 
     except Exception as e:
@@ -82,7 +89,7 @@ def get_data(symbol):
         return None
 
 # ======================
-# WINRATE
+# WINRATE AI
 # ======================
 def winrate(d):
     score=50
@@ -90,6 +97,7 @@ def winrate(d):
     if d["macd"]=="🟢": score+=15
     if d["volume"]>1.2: score+=10
     if d["rr"]>2: score+=15
+    if d["momentum"]>0: score+=10
     return min(95,max(10,score))
 
 # ======================
@@ -116,24 +124,38 @@ def format_output(symbol):
     t = timing(d)
 
     timing_text = "🔥 入場區" if t=="ENTRY" else "❌ 唔好追" if t=="HIGH" else "🔄 等回調"
+    trend = "📈 偏強" if d["macd"]=="🟢" else "📉 偏弱"
 
-    msg = f"""📊【{symbol}】
+    summary = "🔥 可以入場" if t=="ENTRY" and w>=70 else "❌ 唔好追" if t=="HIGH" else "🔄 等回調"
+
+    msg = f"""📊【{symbol} AI分析】
 
 💰 價格：{d['price']}
 🧠 勝率：{w}%
 
-⏱️ {timing_text}
+⏱️ Timing：{timing_text}
 
-📥 入場：{d['entry_low']} - {d['entry_high']}
-🛑 止蝕：{d['stop']}
-🎯 目標：{d['target']}
+{trend}
+RSI：{d['rsi']}
+MACD：{d['macd']}
+
+📉 支撐：{d['entry_low']}
+📈 阻力：{d['target']}
+
+🔥 策略
+👉 入場：{d['entry_low']} - {d['entry_high']}
+👉 止蝕：{d['stop']}
+👉 目標：{d['target']}
 
 📊 R/R：{d['rr']}
+
+🧠 總結：
+👉 {summary}
 """
     return msg
 
 # ======================
-# LOOP（自動推送）
+# AUTO SIGNAL
 # ======================
 def loop():
     while True:
@@ -160,7 +182,7 @@ def loop():
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
-# WEBHOOK
+# COMMAND
 # ======================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -178,21 +200,15 @@ def webhook():
                 send(chat_id, format_output(s))
 
         elif text.startswith("/calc"):
-            try:
-                x=float(text.split()[1])
-                send(chat_id,f"+10% {round(x*1.1,2)}\n+20% {round(x*1.2,2)}")
-            except:
-                send(chat_id,"❌ /calc 100")
+            x=float(text.split()[1])
+            send(chat_id,f"+10% {round(x*1.1,2)}\n+20% {round(x*1.2,2)}\n-10% {round(x*0.9,2)}")
 
         elif text.startswith("/position"):
-            try:
-                _,sym,entry=text.split()
-                df=yf.Ticker(sym).history(period="5d", interval="5m")
-                price=df["Close"].iloc[-1]
-                pnl=(price-float(entry))/float(entry)*100
-                send(chat_id,f"{sym} 盈虧：{round(pnl,2)}%")
-            except:
-                send(chat_id,"❌ /position TSLA 300")
+            _,sym,entry=text.split()
+            df=yf.Ticker(sym).history(period="5d", interval="5m")
+            price=df["Close"].iloc[-1]
+            pnl=(price-float(entry))/float(entry)*100
+            send(chat_id,f"{sym} 盈虧：{round(pnl,2)}%")
 
         return "ok"
 
