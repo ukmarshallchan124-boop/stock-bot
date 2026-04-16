@@ -18,17 +18,13 @@ LONG_TERM = ["SPY", "MSFT"]
 last_alert = {}
 
 # =========================
-# 🌐 FLASK（Render OK）
+# 🌐 FLASK（關鍵：一定要主線）
 # =========================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
     return "✅ AlphaCore v2 Running"
-
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # =========================
 # SAFE REQUEST
@@ -43,12 +39,13 @@ def safe_request(url):
 # DATA
 # =========================
 def get_data(symbol):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=5m"
-    data = safe_request(url)
-
     try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=5m"
+        data = safe_request(url)
+
         closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
         series = pd.Series(closes).dropna()
+
         if len(series) < 30:
             return None
         return series
@@ -94,21 +91,27 @@ def trend(data):
     return "📈 上升趨勢" if data.iloc[-1] > data.mean() else "📉 下跌趨勢"
 
 def breakout(data):
-    high = data.max()
-    low = data.min()
-    price = data.iloc[-1]
+    try:
+        high = data.max()
+        low = data.min()
+        price = data.iloc[-1]
 
-    if price > high * 0.995:
-        return "🚀 突破阻力（加速區）"
-    elif price < low * 1.005:
-        return "💥 跌穿支持（風險區）"
-    return "📊 正常波動"
+        if price > high * 0.995:
+            return "🚀 突破阻力"
+        elif price < low * 1.005:
+            return "💥 跌穿支持"
+        return "📊 正常波動"
+    except:
+        return "📊 無法判斷"
 
 def support_resistance(data):
-    return data.min(), data.max()
+    try:
+        return data.min(), data.max()
+    except:
+        return 0, 0
 
 # =========================
-# 🧠 AI SIGNAL 分級（核心升級）
+# 🧠 AI SIGNAL（分級）
 # =========================
 def signal_score(rsi, macd, sig, drop, price, sup):
     score = 0
@@ -121,38 +124,29 @@ def signal_score(rsi, macd, sig, drop, price, sup):
     if drop <= -7: score += 2
     elif drop <= -4: score += 1
 
-    if abs(price - sup) / sup < 0.03:
+    if sup > 0 and abs(price - sup)/sup < 0.03:
         score += 2
 
     return score
 
 def signal_level(score):
     if score >= 6:
-        return "🔥 S級（最佳入場）", "👉 可分2注（15–20%）"
+        return "🔥 S級（最佳入場）", "👉 分2注（15–20%）"
     elif score >= 4:
         return "🟢 A級（回調入場）", "👉 小注（10%）"
     elif score >= 2:
-        return "🟡 B級（觀察）", "👉 等確認"
+        return "🟡 B級（觀察）", "👉 等待"
     else:
-        return "🔴 C級（風險高）", "👉 唔好入場"
+        return "🔴 C級（高風險）", "👉 唔好入場"
 
 # =========================
-# RR / PROFIT
+# RR
 # =========================
 def rr():
-    risk = 5
-    reward = 12
-    return reward / risk, risk, reward
+    return 2.4, 5, 12
 
 def rr_text(rr):
     return "🟢 高質" if rr >= 2 else "🟡 一般"
-
-def profit(change):
-    if change >= 20:
-        return "💰 +20%（鎖利）"
-    elif change >= 10:
-        return "🟡 +10%（留意）"
-    return ""
 
 # =========================
 # NEWS
@@ -176,16 +170,6 @@ def news_sentiment(text):
     return "🟡"
 
 # =========================
-# ALERT CONTROL
-# =========================
-def should_alert(symbol, level):
-    key = f"{symbol}_{level}"
-    if key in last_alert:
-        return False
-    last_alert[key] = True
-    return True
-
-# =========================
 # SEND
 # =========================
 def send(msg):
@@ -198,13 +182,12 @@ def send(msg):
         print("send error")
 
 # =========================
-# BOT LOOP
+# BOT LOOP（background）
 # =========================
 def bot_loop():
     while True:
         try:
-            msg = "🚀 AlphaCore v2（AI決策系統）\n\n"
-
+            msg = "🚀 AlphaCore v2（Web穩定版）\n\n"
             msg += "🚗 波段交易區\n━━━━━━━━━━━━━━━\n"
 
             for s in STOCKS:
@@ -225,28 +208,23 @@ def bot_loop():
                 score = signal_score(rsi, macd, sig, drop, price, sup)
                 level, action = signal_level(score)
 
-                if not should_alert(s, level):
-                    continue
-
                 rr_val, risk, reward = rr()
 
                 msg += f"""
 📊 {s} | 💰 {price:.2f}
 
-🔥 信號：{level}
+🔥 {level}
 {action}
 
 📊 RSI {rsi:.1f} | MACD {'上升' if macd>sig else '下降'}
 
-🎯 {rr_text(rr_val)} | R/R 1:{rr_val:.1f}
+🎯 {rr_text(rr_val)} | R/R 1:{rr_val}
 ⚠️ -{risk}% / 🎯 +{reward}%
 
 📊 {struct} | {tr}
 📡 {br}
 
 🧱 支持 {sup:.2f} | 阻力 {res:.2f}
-
-{profit(drop)}
 """
 
                 for n in get_news(s):
@@ -255,10 +233,7 @@ def bot_loop():
                 msg += "\n━━━━━━━━━━━━━━━\n"
 
             msg += "\n🟩 長線（DCA）\n━━━━━━━━━━━━━━━\n"
-            msg += """
-📊 SPY 👉 每月買
-📊 MSFT 👉 回調先加
-"""
+            msg += "📊 SPY 👉 每月買\n📊 MSFT 👉 回調先加\n"
 
             send(msg)
 
@@ -268,9 +243,10 @@ def bot_loop():
         time.sleep(600)
 
 # =========================
-# START（關鍵）
+# START（最重要）
 # =========================
 if __name__ == "__main__":
-    threading.Thread(target=run_server).start()
-    time.sleep(3)
-    bot_loop()
+    threading.Thread(target=bot_loop).start()
+
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
