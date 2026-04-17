@@ -17,7 +17,7 @@ last_alert = {}
 msft_last_alert = 0
 
 # ======================
-# SEND（加 debug）
+# SEND（加debug）
 # ======================
 def send(chat_id, msg):
     try:
@@ -26,7 +26,7 @@ def send(chat_id, msg):
             "chat_id": chat_id,
             "text": msg
         })
-        print("📤 send result:", res.text)
+        print("📤 send:", res.text)
     except Exception as e:
         print("❌ send error:", e)
 
@@ -101,6 +101,23 @@ def timing(d):
         return "WAIT"
 
 # ======================
+# NEWS
+# ======================
+def get_news(symbol):
+    try:
+        url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
+        data = requests.get(url).json()
+        articles = data.get("articles", [])[:3]
+
+        text = f"\n📰 {symbol} News\n"
+        for a in articles:
+            text += f"• {a['title']}\n"
+
+        return text
+    except:
+        return "\n📰 No news\n"
+
+# ======================
 # FORMAT
 # ======================
 def format_output(symbol):
@@ -108,18 +125,27 @@ def format_output(symbol):
     w = winrate(d)
     t = timing(d)
 
-    return f"""📊 {symbol}
+    msg = f"""
+📊 {symbol}
 
 💰 價格：{d['price']}
-勝率：{w}%
+🧠 勝率：{w}%
 
-👉 入場：{d['entry_low']} - {d['entry_high']}
-👉 止蝕：{d['stop']}
-👉 目標：{d['target']}
+📉 入場：{d['entry_low']} - {d['entry_high']}
+🛑 止蝕：{d['stop']}
+🎯 目標：{d['target']}
+
+RSI：{d['rsi']}
+MACD：{d['macd']}
+
+📊 R/R：{d['rr']}
 """
 
+    msg += get_news(symbol)
+    return msg
+
 # ======================
-# LOOP（自動推送）
+# AUTO SIGNAL
 # ======================
 def loop():
     while True:
@@ -129,33 +155,39 @@ def loop():
                 w=winrate(d)
                 t=timing(d)
 
-                now=time.time()
-                last=last_alert.get(s,0)
-
-                if w>=70 and t=="ENTRY" and now-last>600:
-                    send(CHAT_ID,f"🚀【{s} 入場】勝率：{w}%")
-                    last_alert[s]=now
+                if w>=70 and t=="ENTRY":
+                    send(CHAT_ID,f"🚀 {s} 入場機會\n勝率：{w}%")
 
             time.sleep(300)
-
         except Exception as e:
             print("❌ loop error:", e)
 
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
-# WEBHOOK（🔥重點）
+# COMMAND
+# ======================
+def calc(x):
+    x=float(x)
+    return f"+10% {round(x*1.1,2)}\n-10% {round(x*0.9,2)}"
+
+def position(symbol, entry):
+    df=yf.Ticker(symbol).history(period="1d")
+    price=df["Close"].iloc[-1]
+    pnl=(price-entry)/entry*100
+    return f"{symbol} 盈虧：{round(pnl,2)}%"
+
+# ======================
+# WEBHOOK（重點修正）
 # ======================
 @app.route("/webhook", methods=["POST"])
+@app.route("/webhook/", methods=["POST"])
 def webhook():
     data = request.get_json()
 
-    print("🔥 收到 webhook:", data)
+    print("🔥 webhook:", data)
 
-    if not data:
-        return "ok"
-
-    if "message" not in data:
+    if not data or "message" not in data:
         return "ok"
 
     chat_id = data["message"]["chat"]["id"]
@@ -163,24 +195,31 @@ def webhook():
 
     print("👉 text:", text)
 
-    if text == "/check":
-        send(chat_id, "✅ Bot working")
+    if text == "/start":
+        send(chat_id, "✅ Bot 已啟動")
 
-    elif text == "/stock":
+    elif text == "/check":
         for s in SYMBOLS:
             send(chat_id, format_output(s))
+
+    elif text.startswith("/calc"):
+        send(chat_id, calc(text.split()[1]))
+
+    elif text.startswith("/position"):
+        p=text.split()
+        send(chat_id, position(p[1].upper(), float(p[2])))
 
     return "ok"
 
 # ======================
-# ROOT（Render check）
+# ROOT
 # ======================
 @app.route("/")
 def home():
     return "running"
 
 # ======================
-# RUN（🔥解決 port 問題）
+# RUN（Render fix）
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
