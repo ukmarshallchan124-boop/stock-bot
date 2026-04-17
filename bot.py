@@ -9,6 +9,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SWING_STOCKS = ["TSLA","NVDA","AMD"]
+
 signal_state = {}
 TRADE_FILE = "trades.json"
 
@@ -17,15 +18,19 @@ TRADE_FILE = "trades.json"
 # ======================
 def send(chat_id, text, keyboard=None):
     try:
-        data = {"chat_id": chat_id, "text": text[:4000]}
+        data = {
+            "chat_id": chat_id,
+            "text": text[:4000]
+        }
         if keyboard:
             data["reply_markup"] = keyboard
+
         requests.post(f"{URL}/sendMessage", json=data)
     except:
         pass
 
 # ======================
-# MENU
+# MENU（App UI）
 # ======================
 def menu():
     return {
@@ -37,7 +42,7 @@ def menu():
     }
 
 # ======================
-# STORAGE
+# LOAD / SAVE（勝率追蹤）
 # ======================
 def load_trades():
     try:
@@ -82,10 +87,13 @@ def get_data(symbol):
     else:
         macd = "⚪ 空頭"
 
+    momentum = (price - df["Close"].iloc[-20]) / df["Close"].iloc[-20] * 100
+
     entry_low = low*1.01
     entry_high = low*1.03
     stop = low*0.97
     target = high*1.02
+
     rr = (target-entry_low)/(entry_low-stop)
 
     return {
@@ -96,153 +104,209 @@ def get_data(symbol):
         "entry_high":round(entry_high,2),
         "stop":round(stop,2),
         "target":round(target,2),
-        "rr":round(rr,2)
+        "rr":round(rr,2),
+        "momentum":round(momentum,2)
     }
 
 # ======================
-# NEWS
+# NEWS（簡易 AI）
 # ======================
 def get_news(symbol):
     try:
         news = yf.Ticker(symbol).news[:2]
-        text = "\n📰【新聞】\n"
+        txt = "\n📰【新聞】\n"
         score = 0
+
         for n in news:
             title = n["title"]
-            if "growth" in title.lower():
+            if any(w in title.lower() for w in ["surge","growth","beat","strong"]):
                 tag="🟢 利好"; score+=1
-            elif "risk" in title.lower():
+            elif any(w in title.lower() for w in ["drop","cut","risk"]):
                 tag="🔴 利淡"; score-=1
             else:
                 tag="⚪ 中性"
-            text += f"• {title}\n{tag}\n"
+
+            txt += f"• {title}\n{tag}\n"
 
         summary = "🟢 偏利好" if score>0 else "🔴 偏利淡" if score<0 else "⚪ 中性"
-        text += f"\n🧠 新聞結論：{summary}\n"
-        return text
+        txt += f"\n🧠 新聞結論：{summary}\n"
+
+        return txt, score
     except:
-        return "\n📰 無新聞\n"
+        return "\n📰 無新聞\n",0
 
 # ======================
-# AI WINRATE
+# AI 評分
+# ======================
+def ai_score(d, news_score):
+    score = 50
+
+    if d["rsi"] < 45: score += 10
+    if "🟢" in d["macd"]: score += 15
+    if "🟡" in d["macd"]: score += 20
+    if d["rr"] > 2: score += 15
+    if d["momentum"] > 0: score += 10
+
+    score += news_score * 5
+
+    return min(95,max(40,score))
+
+# ======================
+# 勝率（學習）
 # ======================
 def get_winrate(symbol):
     trades = load_trades()
     wins = [t for t in trades if t["symbol"]==symbol and t["result"]=="win"]
     total = [t for t in trades if t["symbol"]==symbol]
+
     if len(total)==0:
         return 60
+
     return int(len(wins)/len(total)*100)
 
-def record_trade(symbol, entry, stop, target):
-    trades = load_trades()
-    trades.append({
-        "symbol":symbol,
-        "entry":entry,
-        "stop":stop,
-        "target":target,
-        "time":time.time(),
-        "result":"open"
-    })
-    save_trades(trades)
-
-def update_trades():
-    trades = load_trades()
-    for t in trades:
-        if t["result"] != "open":
-            continue
-        df = yf.Ticker(t["symbol"]).history(period="1d")
-        price = df["Close"].iloc[-1]
-        if price >= t["target"]:
-            t["result"]="win"
-        elif price <= t["stop"]:
-            t["result"]="loss"
-    save_trades(trades)
-
 # ======================
-# FORMAT
+# FORMAT（核心🔥）
 # ======================
 def format_swing(symbol):
     d = get_data(symbol)
     if not d:
         return "無數據"
-    win = get_winrate(symbol)
+
+    news, news_score = get_news(symbol)
+    score = ai_score(d, news_score)
+
+    timing = "🔥 入場區" if d["entry_low"] <= d["price"] <= d["entry_high"] else "❌ 唔好追" if d["price"] > d["entry_high"] else "⏳ 等回調"
+
+    action = "❌ 唔好追" if d["price"] > d["entry_high"] else "⏳ 等回調" if d["price"] < d["entry_low"] else "🔥 可考慮入場"
 
     return f"""
 📊【{symbol} 波段分析】
 
 💰 價格：{d['price']}
-🧠 勝率：{win}%
+🧠 AI評分：{score}%
+
+⏱ Timing：{timing}
+
+━━━━━━━━━━━━━━
+
+📉 趨勢：{"📈 偏強" if d["momentum"]>0 else "📉 偏弱"}
 
 RSI：{d['rsi']}
 MACD：{d['macd']}
 
-📉 支撐：{d['entry_low']}
-📈 阻力：{d['target']}
+📊 支撐：{d['entry_low']}
+📊 阻力：{d['target']}
 
-🎯 入場：{d['entry_low']} - {d['entry_high']}
+━━━━━━━━━━━━━━
+
+🎯 策略（重點🔥）
+
+👉 入場：{d['entry_low']} – {d['entry_high']}
+👉 止蝕：{d['stop']}
+👉 目標：{d['target']}
+
 📊 R/R：{d['rr']}
-""" + get_news(symbol)
 
+━━━━━━━━━━━━━━
+
+📌 行動建議：
+👉 {action}
+
+⏳ 預期：
+👉 2 – 5日內機會出現
+
+━━━━━━━━━━━━━━
+
+🧠 AI結論：
+👉 {"❌ 高位風險" if d["price"]>d["entry_high"] else "⏳ 等回調先" if d["price"]<d["entry_low"] else "🔥 可入場"}
+
+{news}
+"""
+
+# ======================
+# 長線
+# ======================
 def format_long():
     df = yf.Ticker("MSFT").history(period="6mo")
     price = df["Close"].iloc[-1]
-    return f"""
-💰【長線分析】
+    m3 = (price-df["Close"].iloc[-90])/df["Close"].iloc[-90]*100
 
-MSFT：{round(price,2)}
+    return f"""
+💰【長線投資分析】
+
+📊 MSFT：{round(price,2)}
+📉 3個月：{round(m3,1)}%
+
+━━━━━━━━━━━━━━
+
+💡 分批策略：
+
+🟢 現價：30%
+🟡 -5%：30%
+🔴 -10%：40%
+
+━━━━━━━━━━━━━━
 
 📈 S&P500：
+
 VOO / SPY / VUAG
 
-👉 每月 DCA + 回調加倉
+👉 每月 1–2 次
+👉 跌 5% 加
+👉 跌 10% 加多
+👉 長期持有（5年以上）
+
+━━━━━━━━━━━━━━
+
+🧠 狀態：
+🟢 可開始分批
 """
 
+# ======================
+# 工具
+# ======================
 def calc(x):
     x=float(x)
-    return f"+10% {round(x*1.1,2)}\n-10% {round(x*0.9,2)}"
+    return f"📊 計算結果\n+10% → {round(x*1.1,2)}\n-10% → {round(x*0.9,2)}"
 
 def position(symbol, entry):
     df=yf.Ticker(symbol).history(period="1d")
     price=df["Close"].iloc[-1]
     pnl=(price-entry)/entry*100
-    return f"{symbol} 盈虧：{round(pnl,2)}%"
+    return f"""
+📍【持倉分析】
+
+{symbol} 現價：{round(price,2)}
+盈虧：{round(pnl,2)}%
+"""
 
 # ======================
-# LOOP
+# AUTO SIGNAL（🔥）
 # ======================
 def loop():
     while True:
         try:
-            update_trades()
-
             for s in SWING_STOCKS:
                 d = get_data(s)
                 if not d:
                     continue
 
-                win = get_winrate(s)
-                if win < 50:
+                state = signal_state.get(s, {"setup":False,"entry":False})
+
+                if d["rr"] < 2:
                     continue
 
-                state = signal_state.get(s, {"setup":False,"entry":False,"time":0})
-
-                # cooldown 30min
-                if time.time() - state["time"] < 1800:
-                    continue
-
+                # Setup（只推一次）
                 if d["price"] > d["entry_high"] and not state["setup"]:
-                    send(CHAT_ID,f"👀【{s} Setup】\n{d['entry_low']} - {d['entry_high']}")
+                    send(CHAT_ID,f"👀【{s} Setup】\n{d['entry_low']} – {d['entry_high']}")
                     state["setup"]=True
-                    state["time"]=time.time()
 
+                # Entry（嚴格）
                 in_range = d["entry_low"] <= d["price"] <= d["entry_high"]
 
-                if in_range and not state["entry"] and d["rsi"]<45 and "🟢" in d["macd"]:
-                    send(CHAT_ID,f"🚀【{s} Entry】\n{d['entry_low']} - {d['entry_high']}")
-                    record_trade(s,d["entry_low"],d["stop"],d["target"])
+                if in_range and not state["entry"] and d["rsi"]<50 and ("🟢" in d["macd"] or "🟡" in d["macd"]):
+                    send(CHAT_ID,f"🚀【{s} 入場確認】\n{d['entry_low']} – {d['entry_high']}")
                     state["entry"]=True
-                    state["time"]=time.time()
 
                 if not in_range:
                     state["entry"]=False
@@ -250,6 +314,7 @@ def loop():
                 signal_state[s]=state
 
             time.sleep(300)
+
         except:
             pass
 
@@ -269,7 +334,7 @@ def webhook():
     text = data["message"].get("text","").strip()
 
     if text in ["/start","start"]:
-        send(chat_id,"🚀 Trading System",menu())
+        send(chat_id,"🚀 AI Trading System（V21）",menu())
 
     elif text == "📊 波段分析":
         for s in SWING_STOCKS:
@@ -279,16 +344,16 @@ def webhook():
         send(chat_id,format_long(),menu())
 
     elif text == "🧮 計算工具":
-        send(chat_id,"輸入數字，例如 300",menu())
+        send(chat_id,"👉 輸入價格，例如：300",menu())
 
     elif text.replace('.','',1).isdigit():
         send(chat_id,calc(text),menu())
 
     elif text == "📍 持倉分析":
-        send(chat_id,"輸入：TSLA 300",menu())
+        send(chat_id,"👉 輸入：TSLA 300",menu())
 
     elif len(text.split())==2:
-        s,p=text.split()
+        s, p = text.split()
         try:
             send(chat_id,position(s.upper(),float(p)),menu())
         except:
