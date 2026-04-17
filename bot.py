@@ -74,7 +74,7 @@ def get_data(symbol):
         return None
 
 # ======================
-# WINRATE + TIMING
+# WINRATE / TIMING
 # ======================
 def winrate(d):
     score=50
@@ -93,16 +93,24 @@ def timing(d):
         return "WAIT"
 
 # ======================
+# 💰 倉位建議（V12）
+# ======================
+def position_size(w):
+    if w>=80: return "🔥 高勝率：建議 25% 資金"
+    elif w>=70: return "🟡 中高：建議 15%"
+    elif w>=60: return "⚪ 普通：建議 10%"
+    else: return "❌ 唔建議入場"
+
+# ======================
 # NEWS
 # ======================
 def get_news(symbol):
     try:
         url=f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
         data=requests.get(url,timeout=5).json()
-
         articles=data.get("articles",[])[:2]
 
-        text="\n📰新聞\n"
+        txt="\n📰新聞\n"
         score=0
 
         for a in articles:
@@ -115,12 +123,12 @@ def get_news(symbol):
             else:
                 tag="⚪"
 
-            text+=f"{tag} {t}\n"
+            txt+=f"{tag} {t}\n"
 
         summary="🟢利好" if score>0 else "🔴利淡" if score<0 else "⚪中性"
-        text+=f"👉 {summary}\n"
+        txt+=f"👉 {summary}\n"
 
-        return text
+        return txt
     except:
         return "\n📰無新聞\n"
 
@@ -144,8 +152,8 @@ def format_output(symbol):
 🧠 勝率：{w}%
 ⏱️ {timing_text}
 
-RSI：{d['rsi']}
-MACD：{d['macd']}
+💰 倉位建議：
+{position_size(w)}
 
 📉 支撐：{d['support']}
 📈 阻力：{d['resistance']}
@@ -162,7 +170,7 @@ MACD：{d['macd']}
     return msg
 
 # ======================
-# LOOP（Signal + 長線）
+# 🔔 LOOP（Signal + 長線）
 # ======================
 def loop():
     global long_last_alert
@@ -175,6 +183,7 @@ def loop():
 
                 w=winrate(d)
                 t=timing(d)
+
                 now=time.time()
                 last=last_alert.get(s,0)
 
@@ -186,7 +195,7 @@ def loop():
                     send(CHAT_ID,f"🚀 {s} 入場（勝率{w}%）")
                     last_alert[s]=now
 
-            # MSFT + S&P500（通用）
+            # 長線（MSFT + S&P）
             df=yf.Ticker("MSFT").history(period="6mo")
             price=df["Close"].iloc[-1]
             m3=(price-df["Close"].iloc[-90])/df["Close"].iloc[-90]*100
@@ -197,9 +206,8 @@ def loop():
 
 MSFT 回調：{round(m3,1)}%
 
-🏦 S&P500 建議：
+🏦 S&P500：
 長線分批加倉（DCA）
-（可用 VUAG / VOO / SPY）
 """)
                 long_last_alert=time.time()
 
@@ -210,7 +218,7 @@ MSFT 回調：{round(m3,1)}%
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
-# TOOL
+# 🧮 工具（V10）
 # ======================
 def calc(x):
     x=float(x)
