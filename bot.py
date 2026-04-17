@@ -93,13 +93,13 @@ def timing(d):
         return "WAIT"
 
 # ======================
-# 💰 倉位建議（V12）
+# 倉位建議
 # ======================
 def position_size(w):
-    if w>=80: return "🔥 高勝率：建議 25% 資金"
-    elif w>=70: return "🟡 中高：建議 15%"
-    elif w>=60: return "⚪ 普通：建議 10%"
-    else: return "❌ 唔建議入場"
+    if w>=80: return "🔥 高勝率：25%"
+    elif w>=70: return "🟡 中高：15%"
+    elif w>=60: return "⚪ 普通：10%"
+    else: return "❌ 不建議入場"
 
 # ======================
 # NEWS
@@ -159,9 +159,9 @@ def format_output(symbol):
 📈 阻力：{d['resistance']}
 
 💰 策略
-入場：{d['entry_low']} - {d['entry_high']}
-止蝕：{d['stop']}
-目標：{d['target']}
+👉 入場：{d['entry_low']} - {d['entry_high']}
+👉 止蝕：{d['stop']}
+👉 目標：{d['target']}
 
 📊 R/R：{d['rr']}
 """
@@ -170,7 +170,7 @@ def format_output(symbol):
     return msg
 
 # ======================
-# 🔔 LOOP（Signal + 長線）
+# LOOP（Signal + 分級加倉）
 # ======================
 def loop():
     global long_last_alert
@@ -195,21 +195,52 @@ def loop():
                     send(CHAT_ID,f"🚀 {s} 入場（勝率{w}%）")
                     last_alert[s]=now
 
-            # 長線（MSFT + S&P）
+            # ======================
+            # 🔥 分級加倉系統
+            # ======================
             df=yf.Ticker("MSFT").history(period="6mo")
             price=df["Close"].iloc[-1]
             m3=(price-df["Close"].iloc[-90])/df["Close"].iloc[-90]*100
 
-            if m3<-5 and time.time()-long_last_alert>86400:
-                send(CHAT_ID,
-                f"""💰【長線加倉】
+            now=time.time()
 
-MSFT 回調：{round(m3,1)}%
+            if now-long_last_alert>21600:  # 6小時
 
-🏦 S&P500：
-長線分批加倉（DCA）
+                if m3<=-20:
+                    level="🚀 強力加倉區"
+                    action="40% 資金"
+                elif m3<=-15:
+                    level="🔥 重倉區"
+                    action="30%"
+                elif m3<=-10:
+                    level="🟠 正常加倉"
+                    action="20%"
+                elif m3<=-5:
+                    level="🟡 輕倉"
+                    action="10%"
+                else:
+                    level=None
+
+                if level:
+                    send(CHAT_ID,f"""💰【長線加倉信號】
+
+🏢 MSFT
+📉 回調：{round(m3,1)}%
+
+🧠 判斷：
+{level}
+
+💰 建議投入：
+👉 {action}
+
+🏦 S&P 500
+👉 同步分批加倉
+
+⚠️ 提醒：
+唔好一次過 All-in
 """)
-                long_last_alert=time.time()
+
+                    long_last_alert=now
 
             time.sleep(300)
         except:
@@ -218,7 +249,7 @@ MSFT 回調：{round(m3,1)}%
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
-# 🧮 工具（V10）
+# 工具
 # ======================
 def calc(x):
     x=float(x)
