@@ -17,7 +17,7 @@ last_alert = {}
 msft_last_alert = 0
 
 # ======================
-# SEND（加debug）
+# SEND（加 debug）
 # ======================
 def send(chat_id, msg):
     try:
@@ -105,17 +105,33 @@ def timing(d):
 # ======================
 def get_news(symbol):
     try:
-        url = f"https://newsapi.org/v2/everything?q={symbol}&apiKey={NEWS_API}"
+        url = f"https://newsapi.org/v2/everything?q={symbol}&language=en&sortBy=publishedAt&apiKey={NEWS_API}"
         data = requests.get(url).json()
+
         articles = data.get("articles", [])[:3]
 
-        text = f"\n📰 {symbol} News\n"
-        for a in articles:
-            text += f"• {a['title']}\n"
+        news_text = f"\n📰【{symbol} 新聞】\n"
+        score = 0
 
-        return text
+        for a in articles:
+            title = a["title"]
+
+            if any(w in title.lower() for w in ["surge","growth","beat","strong","record"]):
+                sentiment = "🟢 利好"; score+=1
+            elif any(w in title.lower() for w in ["fall","risk","cut","warn","drop"]):
+                sentiment = "🔴 利淡"; score-=1
+            else:
+                sentiment = "⚪ 中性"
+
+            news_text += f"• {title}\n{sentiment}\n"
+
+        summary = "🟢 偏利好" if score>0 else "🔴 偏利淡" if score<0 else "⚪ 中性"
+        news_text += f"\n🧠 新聞總結：{summary}\n"
+
+        return news_text
+
     except:
-        return "\n📰 No news\n"
+        return "\n📰 無新聞\n"
 
 # ======================
 # FORMAT
@@ -125,29 +141,43 @@ def format_output(symbol):
     w = winrate(d)
     t = timing(d)
 
-    msg = f"""
-📊 {symbol}
+    timing_text = "🔥 入場區" if t=="ENTRY" else "❌ 唔好追" if t=="HIGH" else "🔄 等回調"
+    rsi_text = "🟢 超賣" if d["rsi"]<30 else "🔴 超買" if d["rsi"]>70 else "⚪ 正常"
+    trend = "📈 偏強" if d["macd"]=="🟢" else "📉 偏弱"
+
+    summary = "🔥 可以入場" if t=="ENTRY" and w>=70 else "❌ 太高" if t=="HIGH" else "🔄 等"
+
+    msg = f"""📊【{symbol} 波段分析】
 
 💰 價格：{d['price']}
 🧠 勝率：{w}%
+⏱️ Timing：{timing_text}
 
-📉 入場：{d['entry_low']} - {d['entry_high']}
-🛑 止蝕：{d['stop']}
-🎯 目標：{d['target']}
-
-RSI：{d['rsi']}
+{trend}
+RSI：{d['rsi']} {rsi_text}
 MACD：{d['macd']}
 
+📉 支撐：{d['entry_low']}
+📈 阻力：{d['target']}
+
+👉 入場：{d['entry_low']} - {d['entry_high']}
+👉 止蝕：{d['stop']}
+👉 目標：{d['target']}
+
 📊 R/R：{d['rr']}
+
+👉 總結：{summary}
 """
 
     msg += get_news(symbol)
     return msg
 
 # ======================
-# AUTO SIGNAL
+# AUTO LOOP
 # ======================
 def loop():
+    global msft_last_alert
+
     while True:
         try:
             for s in SYMBOLS:
@@ -155,39 +185,36 @@ def loop():
                 w=winrate(d)
                 t=timing(d)
 
-                if w>=70 and t=="ENTRY":
-                    send(CHAT_ID,f"🚀 {s} 入場機會\n勝率：{w}%")
+                now=time.time()
+                last=last_alert.get(s,0)
+
+                if w>=80 and t!="ENTRY" and now-last>3600:
+                    send(CHAT_ID,f"👀【{s} Setup】勝率{w}%")
+                    last_alert[s]=now
+
+                if w>=70 and t=="ENTRY" and now-last>600:
+                    send(CHAT_ID,f"🚀【{s} 入場】勝率{w}%")
+                    last_alert[s]=now
 
             time.sleep(300)
+
         except Exception as e:
             print("❌ loop error:", e)
 
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
-# COMMAND
+# COMMANDS（🔥 ROOT webhook）
 # ======================
-def calc(x):
-    x=float(x)
-    return f"+10% {round(x*1.1,2)}\n-10% {round(x*0.9,2)}"
-
-def position(symbol, entry):
-    df=yf.Ticker(symbol).history(period="1d")
-    price=df["Close"].iloc[-1]
-    pnl=(price-entry)/entry*100
-    return f"{symbol} 盈虧：{round(pnl,2)}%"
-
-# ======================
-# WEBHOOK（重點修正）
-# ======================
-@app.route("/webhook", methods=["POST"])
-@app.route("/webhook/", methods=["POST"])
-def webhook():
-    data = request.get_json()
-
+@app.route("/", methods=["GET","POST"])
+def root():
+    data = request.get_json(silent=True)
     print("🔥 webhook:", data)
 
-    if not data or "message" not in data:
+    if not data:
+        return "ok"
+
+    if "message" not in data:
         return "ok"
 
     chat_id = data["message"]["chat"]["id"]
@@ -203,23 +230,20 @@ def webhook():
             send(chat_id, format_output(s))
 
     elif text.startswith("/calc"):
-        send(chat_id, calc(text.split()[1]))
+        x=float(text.split()[1])
+        send(chat_id, f"+10% {round(x*1.1,2)}")
 
     elif text.startswith("/position"):
         p=text.split()
-        send(chat_id, position(p[1].upper(), float(p[2])))
+        df=yf.Ticker(p[1]).history(period="1d")
+        price=df["Close"].iloc[-1]
+        pnl=(price-float(p[2]))/float(p[2])*100
+        send(chat_id, f"盈虧 {round(pnl,2)}%")
 
     return "ok"
 
 # ======================
-# ROOT
-# ======================
-@app.route("/")
-def home():
-    return "running"
-
-# ======================
-# RUN（Render fix）
+# RUN
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
