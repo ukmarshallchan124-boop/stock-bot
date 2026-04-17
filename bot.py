@@ -9,37 +9,38 @@ TOKEN = os.getenv("TOKEN")
 SYMBOLS = ["TSLA", "NVDA", "AMD"]
 
 # ======================
-# 📩 SEND MESSAGE
+# 📩 SEND
 # ======================
 def send(chat_id, text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     try:
-        requests.post(url, json={
-            "chat_id": chat_id,
-            "text": text
-        }, timeout=5)
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=5
+        )
     except:
         pass
 
 # ======================
-# 📊 GET DATA（穩定版）
+# 📊 DATA（V2）
 # ======================
 def get_data(symbol):
     try:
-        df = yf.Ticker(symbol).history(period="2d", interval="5m")
+        df = yf.Ticker(symbol).history(period="5d", interval="5m")
 
         if df.empty:
             return None
 
         price = float(df["Close"].iloc[-1])
+        high = float(df["High"].max())
+        low = float(df["Low"].min())
 
         # RSI
         delta = df["Close"].diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
         rs = gain.rolling(14).mean() / loss.rolling(14).mean()
-        rsi = 100 - (100 / (1 + rs))
-        rsi_val = float(rsi.iloc[-1])
+        rsi = float((100 - (100 / (1 + rs))).iloc[-1])
 
         # MACD
         ema12 = df["Close"].ewm(span=12).mean()
@@ -51,15 +52,17 @@ def get_data(symbol):
 
         return {
             "price": round(price, 2),
-            "rsi": round(rsi_val, 1),
-            "macd": macd
+            "rsi": round(rsi, 1),
+            "macd": macd,
+            "support": round(low, 2),
+            "resistance": round(high, 2)
         }
 
     except:
         return None
 
 # ======================
-# 📊 FORMAT（靚版）
+# 📊 FORMAT（V2）
 # ======================
 def format_output(symbol):
     d = get_data(symbol)
@@ -75,12 +78,26 @@ def format_output(symbol):
     else:
         rsi_text = "⚪ 正常"
 
+    # 簡單策略（V2）
+    entry_low = round(d["support"] * 1.01, 2)
+    entry_high = round(d["support"] * 1.03, 2)
+    stop = round(d["support"] * 0.97, 2)
+    target = d["resistance"]
+
     return f"""📊【{symbol}】
 
 💰 價格：{d['price']}
 
 RSI：{d['rsi']} {rsi_text}
 MACD：{d['macd']}
+
+📉 支撐：{d['support']}
+📈 阻力：{d['resistance']}
+
+💰 策略
+👉 入場：{entry_low} - {entry_high}
+👉 止蝕：{stop}
+👉 目標：{target}
 """
 
 # ======================
@@ -97,9 +114,9 @@ def webhook():
     text = data["message"].get("text", "")
 
     if text == "/start":
-        send(chat_id, """🚀 V1 Trading Bot
+        send(chat_id, """🚀 V2 Trading Bot
 
-📊 /check → 查看市場
+📊 /check → 即時分析
 """)
 
     elif text == "/check":
