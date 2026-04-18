@@ -1,6 +1,7 @@
 from flask import Flask, request
 import requests, os, time, threading, json
 import yfinance as yf
+import pandas as pd
 
 app = Flask(__name__)
 
@@ -12,9 +13,8 @@ URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SWING_STOCKS = ["TSLA","NVDA","AMD"]
 
-TRADE_FILE = "trades.json"
-signal_state = {}
 cache = {}
+signal_state = {}
 
 SETUP_COOLDOWN = 1800
 ENTRY_COOLDOWN = 3600
@@ -91,7 +91,6 @@ def fetch_twelve(symbol, interval):
             return None
 
         return closes, highs, lows
-
     except:
         return None
 
@@ -102,11 +101,7 @@ def fetch_yahoo(symbol, interval):
         if df.empty:
             return None
 
-        closes = df["Close"].tolist()
-        highs = df["High"].tolist()
-        lows = df["Low"].tolist()
-
-        return closes, highs, lows
+        return df["Close"].tolist(), df["High"].tolist(), df["Low"].tolist()
     except:
         return None
 
@@ -115,57 +110,58 @@ def fetch(symbol, interval):
     key = f"{symbol}_{interval}"
     now = time.time()
 
-    # cache 5分鐘
     if key in cache and now - cache[key]["time"] < 300:
         return cache[key]["data"], False
 
     data = fetch_twelve(symbol, interval)
-    source = False
+    fallback = False
 
     if not data:
         data = fetch_yahoo(symbol, interval)
-        source = True
+        fallback = True
 
     if data:
         cache[key] = {"data": data, "time": now}
 
-    return data, source
+    return data, fallback
 
 # ======================
 # INDICATORS
 # ======================
 def indicators(closes):
-    import pandas as pd
-    df = pd.Series(closes)
+    try:
+        df = pd.Series(closes)
 
-    delta = df.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
-    rsi = 100-(100/(1+rs))
+        delta = df.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        rs = gain.rolling(14).mean()/loss.rolling(14).mean()
+        rsi = 100-(100/(1+rs))
 
-    ema12 = df.ewm(span=12).mean()
-    ema26 = df.ewm(span=26).mean()
-    macd_line = ema12 - ema26
-    signal = macd_line.ewm(span=9).mean()
+        ema12 = df.ewm(span=12).mean()
+        ema26 = df.ewm(span=26).mean()
+        macd_line = ema12 - ema26
+        signal = macd_line.ewm(span=9).mean()
 
-    macd = "🟢 上升動能" if macd_line.iloc[-1] > signal.iloc[-1] else "🔴 下跌動能"
+        macd = "🟢 上升動能" if macd_line.iloc[-1] > signal.iloc[-1] else "🔴 下跌動能"
 
-    return round(rsi.iloc[-1],1), macd
+        return round(rsi.iloc[-1],1), macd
+    except:
+        return "N/A", "N/A"
 
 # ======================
 # MTF
 # ======================
 def mtf(symbol):
-    data_1h, src1 = fetch(symbol,"1h")
-    if not data_1h:
+    data, fb = fetch(symbol,"1h")
+    if not data:
         return None, False
 
-    closes_1h = data_1h[0]
+    closes = data[0]
+    df = pd.Series(closes)
 
-    import pandas as pd
-    df = pd.Series(closes_1h)
-    df_4h = df.resample("4H").last().dropna()
+    # ❗修復：唔用 resample
+    df_4h = df.iloc[::4]
 
     ema50_4h = df_4h.ewm(span=50).mean()
     ema20_1h = df.ewm(span=20).mean()
@@ -175,20 +171,17 @@ def mtf(symbol):
 
     pullback = df.iloc[-1] < df.rolling(10).max().iloc[-1]
 
-    return (trend_4h, trend_1h, pullback), src1
+    return (trend_4h, trend_1h, pullback), fb
 
 # ======================
-# ENTRY 15m
+# ENTRY
 # ======================
 def entry(symbol):
-    data, src = fetch(symbol,"15min")
+    data, _ = fetch(symbol,"15min")
     if not data:
         return False
 
-    closes = data[0]
-
-    import pandas as pd
-    df = pd.Series(closes)
+    df = pd.Series(data[0])
 
     ema9 = df.ewm(span=9).mean()
     ema21 = df.ewm(span=21).mean()
@@ -201,7 +194,7 @@ def entry(symbol):
 # BASE DATA
 # ======================
 def get_data(symbol):
-    data, src = fetch(symbol,"15min")
+    data, fb = fetch(symbol,"15min")
     if not data:
         return None, False
 
@@ -224,7 +217,7 @@ def get_data(symbol):
         "stop":round(stop,2),
         "target":round(target,2),
         "rr":round(rr,2)
-    }, src
+    }, fb
 
 # ======================
 # NEWS
@@ -232,10 +225,7 @@ def get_data(symbol):
 def get_news(symbol):
     try:
         news = yf.Ticker(symbol).news[:3]
-        txt = ""
-        for n in news:
-            txt += f"• {n['title']}\n"
-        return txt or "⚪ 無新聞"
+        return "\n".join([f"• {n['title']}" for n in news]) or "⚪ 無新聞"
     except:
         return "⚪ 無新聞"
 
@@ -243,9 +233,9 @@ def get_news(symbol):
 # FORMAT
 # ======================
 def format_full(symbol, d, fallback):
-    mtf_data, _ = mtf(symbol)
+    mtf_data,_ = mtf(symbol)
     if not mtf_data:
-        return "無數據"
+        return "⚠️ 數據錯誤"
 
     trend_4h, trend_1h, pullback = mtf_data
 
@@ -253,17 +243,17 @@ def format_full(symbol, d, fallback):
     trend1 = "🟡 回調中" if pullback else "🟢 延續"
     timing = "🟢 轉強" if entry(symbol) else "⚪ 未確認"
 
-    data, _ = fetch(symbol,"15min")
-    rsi, macd = indicators(data[0])
+    data,_ = fetch(symbol,"15min")
+    rsi, macd = indicators(data[0]) if data else ("N/A","N/A")
 
     market_text,_ = market_trend()
     news = get_news(symbol)
 
-    fb = "\n⚠️ 使用備用數據（Yahoo）\n" if fallback else ""
+    fb_text = "\n⚠️ 使用備用數據（Yahoo）\n" if fallback else ""
 
     return f"""
 📊【{symbol} 波段分析｜MTF】
-{fb}
+{fb_text}
 💰 價格：{d['price']}
 🌍 市場：{market_text}
 
@@ -306,80 +296,54 @@ def long_term():
 """
 
 # ======================
-# LOOP
+# ANALYSIS THREAD
 # ======================
-def loop():
-    while True:
-        try:
-            now = time.time()
-            _, market_ok = market_trend()
+def run_analysis(chat_id):
+    try:
+        sent = False
 
-            for s in SWING_STOCKS:
-                d, _ = get_data(s)
-                if not d: continue
+        for s in SWING_STOCKS:
+            d, fb = get_data(s)
 
-                mtf_data,_ = mtf(s)
-                if not mtf_data: continue
+            if d:
+                send(chat_id, format_full(s,d,fb))
+                sent = True
 
-                trend_4h, trend_1h, pullback = mtf_data
+        if not sent:
+            send(chat_id,"⚠️ 暫時無數據 / API限制")
 
-                if not (trend_4h and trend_1h and market_ok):
-                    continue
-
-                state = signal_state.get(s, {"setup":0,"entry":0,"zone":None})
-                zone = f"{d['entry_low']}-{d['entry_high']}"
-
-                if d["price"] > d["entry_high"] and d["rr"] > 2:
-                    if now - state["setup"] > SETUP_COOLDOWN and zone != state["zone"]:
-                        send(CHAT_ID,f"👀 {s} Setup\n{zone}")
-                        state["setup"] = now
-                        state["zone"] = zone
-
-                in_range = d["entry_low"] <= d["price"] <= d["entry_high"]
-
-                if in_range and entry(s):
-                    if now - state["entry"] > ENTRY_COOLDOWN:
-                        send(CHAT_ID,f"🚀 {s} Entry\n{zone}")
-                        state["entry"] = now
-
-                signal_state[s] = state
-
-            time.sleep(600)
-
-        except Exception as e:
-            print("LOOP ERROR:", e)
-
-threading.Thread(target=loop,daemon=True).start()
+    except Exception as e:
+        print("ANALYSIS ERROR:", e)
+        send(chat_id,"❌ 系統錯誤")
 
 # ======================
 # WEBHOOK
 # ======================
 @app.route("/",methods=["POST"])
 def webhook():
-    data=request.get_json()
-    if not data or "message" not in data:
+    try:
+        data=request.get_json()
+        if not data or "message" not in data:
+            return "ok"
+
+        chat_id=data["message"]["chat"]["id"]
+        text=data["message"].get("text","").strip()
+
+        if text in ["/start","start"]:
+            send(chat_id,"🚀 V30.3 穩定版",menu())
+
+        elif "波段分析" in text:
+            send(chat_id,"⏳ 分析中...",menu())
+            threading.Thread(target=run_analysis,args=(chat_id,)).start()
+
+        elif "長線投資" in text:
+            send(chat_id,long_term(),menu())
+
         return "ok"
 
-    chat_id=data["message"]["chat"]["id"]
-    text=data["message"].get("text","").strip()
-
-    if text in ["/start","start"]:
-        send(chat_id,"🚀 V30.2 Hybrid 穩定版",menu())
-
-    elif "波段分析" in text:
-        sent = False
-        for s in SWING_STOCKS:
-            d, fb = get_data(s)
-            if d:
-                send(chat_id,format_full(s,d,fb),menu())
-                sent = True
-        if not sent:
-            send(chat_id,"⚠️ 暫時無數據（API限制）",menu())
-
-    elif "長線投資" in text:
-        send(chat_id,long_term(),menu())
-
-    return "ok"
+    except Exception as e:
+        print("WEBHOOK ERROR:", e)
+        return "ok"
 
 @app.route("/")
 def home():
