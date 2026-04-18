@@ -1,5 +1,6 @@
 from flask import Flask, request
 import requests, os, time, threading, json
+import yfinance as yf
 
 app = Flask(__name__)
 
@@ -11,7 +12,9 @@ URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SWING_STOCKS = ["TSLA","NVDA","AMD"]
 
+TRADE_FILE = "trades.json"
 signal_state = {}
+cache = {}
 
 SETUP_COOLDOWN = 1800
 ENTRY_COOLDOWN = 3600
@@ -38,98 +41,171 @@ def menu():
     }
 
 # ======================
-# TWELVEDATA FETCH
+# MARKET
 # ======================
-def fetch(symbol, interval):
+def market_trend():
     try:
-        url = f"https://api.twelvedata.com/time_series"
+        spy = yf.Ticker("SPY").history(period="5d", interval="1d")
+        if spy.empty:
+            return "⚪ 市場未知", True
+
+        change = (spy["Close"].iloc[-1] - spy["Close"].iloc[-3]) / spy["Close"].iloc[-3] * 100
+
+        if change > 1:
+            return "📈 美股偏強（Risk ON）", True
+        elif change < -1:
+            return "📉 美股偏弱（Risk OFF）", False
+        else:
+            return "⚪ 市場震盪", True
+    except:
+        return "⚪ 市場未知", True
+
+# ======================
+# HYBRID FETCH
+# ======================
+def fetch_twelve(symbol, interval):
+    try:
+        url = "https://api.twelvedata.com/time_series"
         params = {
             "symbol": symbol,
             "interval": interval,
             "outputsize": 100,
             "apikey": API_KEY
         }
+
         r = requests.get(url, params=params).json()
+
+        if "status" in r and r["status"] == "error":
+            return None
 
         if "values" not in r:
             return None
 
         data = list(reversed(r["values"]))
+
         closes = [float(x["close"]) for x in data]
         highs = [float(x["high"]) for x in data]
         lows = [float(x["low"]) for x in data]
 
+        if len(closes) < 20:
+            return None
+
         return closes, highs, lows
 
-    except Exception as e:
-        print("FETCH ERROR:", e)
+    except:
         return None
+
+
+def fetch_yahoo(symbol, interval):
+    try:
+        df = yf.Ticker(symbol).history(period="5d", interval=interval)
+        if df.empty:
+            return None
+
+        closes = df["Close"].tolist()
+        highs = df["High"].tolist()
+        lows = df["Low"].tolist()
+
+        return closes, highs, lows
+    except:
+        return None
+
+
+def fetch(symbol, interval):
+    key = f"{symbol}_{interval}"
+    now = time.time()
+
+    # cache 5分鐘
+    if key in cache and now - cache[key]["time"] < 300:
+        return cache[key]["data"], False
+
+    data = fetch_twelve(symbol, interval)
+    source = False
+
+    if not data:
+        data = fetch_yahoo(symbol, interval)
+        source = True
+
+    if data:
+        cache[key] = {"data": data, "time": now}
+
+    return data, source
 
 # ======================
 # INDICATORS
 # ======================
-def ema(arr, n):
-    k = 2/(n+1)
-    ema = [arr[0]]
-    for price in arr[1:]:
-        ema.append(price*k + ema[-1]*(1-k))
-    return ema
+def indicators(closes):
+    import pandas as pd
+    df = pd.Series(closes)
 
-def rsi(arr, period=14):
-    gains, losses = [], []
-    for i in range(1,len(arr)):
-        diff = arr[i]-arr[i-1]
-        gains.append(max(diff,0))
-        losses.append(abs(min(diff,0)))
+    delta = df.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
+    rsi = 100-(100/(1+rs))
 
-    avg_gain = sum(gains[-period:])/period
-    avg_loss = sum(losses[-period:])/period
+    ema12 = df.ewm(span=12).mean()
+    ema26 = df.ewm(span=26).mean()
+    macd_line = ema12 - ema26
+    signal = macd_line.ewm(span=9).mean()
 
-    if avg_loss == 0:
-        return 100
+    macd = "🟢 上升動能" if macd_line.iloc[-1] > signal.iloc[-1] else "🔴 下跌動能"
 
-    rs = avg_gain/avg_loss
-    return round(100 - (100/(1+rs)),1)
-
-def macd(arr):
-    ema12 = ema(arr,12)
-    ema26 = ema(arr,26)
-    macd_line = [a-b for a,b in zip(ema12,ema26)]
-    signal = ema(macd_line,9)
-    return "🟢 上升動能" if macd_line[-1] > signal[-1] else "🔴 下跌動能"
+    return round(rsi.iloc[-1],1), macd
 
 # ======================
-# MTF TREND
+# MTF
 # ======================
 def mtf(symbol):
-    d4 = fetch(symbol,"4h")
-    d1 = fetch(symbol,"1h")
-    d15 = fetch(symbol,"15min")
+    data_1h, src1 = fetch(symbol,"1h")
+    if not data_1h:
+        return None, False
 
-    if not d4 or not d1 or not d15:
-        return None
+    closes_1h = data_1h[0]
 
-    c4,_,_ = d4
-    c1,_,_ = d1
-    c15,_,_ = d15
+    import pandas as pd
+    df = pd.Series(closes_1h)
+    df_4h = df.resample("4H").last().dropna()
 
-    trend4 = c4[-1] > ema(c4,50)[-1]
-    trend1 = c1[-1] > ema(c1,20)[-1]
-    timing = c15[-1] > ema(c15,9)[-1]
+    ema50_4h = df_4h.ewm(span=50).mean()
+    ema20_1h = df.ewm(span=20).mean()
 
-    pullback = c1[-1] < max(c1[-10:])
+    trend_4h = df_4h.iloc[-1] > ema50_4h.iloc[-1]
+    trend_1h = df.iloc[-1] > ema20_1h.iloc[-1]
 
-    return trend4, trend1, timing, pullback
+    pullback = df.iloc[-1] < df.rolling(10).max().iloc[-1]
+
+    return (trend_4h, trend_1h, pullback), src1
 
 # ======================
-# DATA
+# ENTRY 15m
+# ======================
+def entry(symbol):
+    data, src = fetch(symbol,"15min")
+    if not data:
+        return False
+
+    closes = data[0]
+
+    import pandas as pd
+    df = pd.Series(closes)
+
+    ema9 = df.ewm(span=9).mean()
+    ema21 = df.ewm(span=21).mean()
+
+    momentum = df.diff().iloc[-3:].mean()
+
+    return ema9.iloc[-1] > ema21.iloc[-1] and momentum > 0
+
+# ======================
+# BASE DATA
 # ======================
 def get_data(symbol):
-    d = fetch(symbol,"15min")
-    if not d:
-        return None
+    data, src = fetch(symbol,"15min")
+    if not data:
+        return None, False
 
-    closes, highs, lows = d
+    closes, highs, lows = data
 
     price = closes[-1]
     high = max(highs)
@@ -147,124 +223,72 @@ def get_data(symbol):
         "entry_high":round(entry_high,2),
         "stop":round(stop,2),
         "target":round(target,2),
-        "rr":round(rr,2),
-        "closes":closes
-    }
+        "rr":round(rr,2)
+    }, src
 
 # ======================
-# NEWS（簡化保留）
+# NEWS
 # ======================
 def get_news(symbol):
-    return "🧠 使用 TwelveData（穩定數據源）"
+    try:
+        news = yf.Ticker(symbol).news[:3]
+        txt = ""
+        for n in news:
+            txt += f"• {n['title']}\n"
+        return txt or "⚪ 無新聞"
+    except:
+        return "⚪ 無新聞"
 
 # ======================
-# FORMAT FULL
+# FORMAT
 # ======================
-def format_full(symbol, d):
-    mt = mtf(symbol)
-    if not mt:
-        return f"{symbol} 無數據"
+def format_full(symbol, d, fallback):
+    mtf_data, _ = mtf(symbol)
+    if not mtf_data:
+        return "無數據"
 
-    trend4, trend1, timing, pullback = mt
+    trend_4h, trend_1h, pullback = mtf_data
 
-    trend4_txt = "🟢 上升" if trend4 else "🔴 下跌"
-    trend1_txt = "🟡 回調中" if pullback else "🟢 延續"
-    timing_txt = "🟢 轉強" if timing else "⚪ 未確認"
+    trend4 = "🟢 上升" if trend_4h else "🔴 下跌"
+    trend1 = "🟡 回調中" if pullback else "🟢 延續"
+    timing = "🟢 轉強" if entry(symbol) else "⚪ 未確認"
 
-    r = rsi(d["closes"])
-    m = macd(d["closes"])
+    data, _ = fetch(symbol,"15min")
+    rsi, macd = indicators(data[0])
+
+    market_text,_ = market_trend()
+    news = get_news(symbol)
+
+    fb = "\n⚠️ 使用備用數據（Yahoo）\n" if fallback else ""
 
     return f"""
-📊【{symbol} 波段分析｜V30】
-
+📊【{symbol} 波段分析｜MTF】
+{fb}
 💰 價格：{d['price']}
+🌍 市場：{market_text}
 
 ━━━━━━━━━━━━━━
+📈 4H：{trend4}
+📊 1H：{trend1}
+⚡ 15m：{timing}
 
-📈 4H：{trend4_txt}
-📊 1H：{trend1_txt}
-⚡ 15m：{timing_txt}
-
-━━━━━━━━━━━━━━
-
-RSI：{r}
-MACD：{m}
+RSI：{rsi}
+MACD：{macd}
 
 ━━━━━━━━━━━━━━
-
 📉 支撐：{d['entry_low']}
 📈 阻力：{d['target']}
 
-🎯 策略：
-
 👉 入場：{d['entry_low']} - {d['entry_high']}
-👉 止蝕：{d['stop']}
-👉 目標：{d['target']}
+🛑 止蝕：{d['stop']}
+🎯 目標：{d['target']}
 
 📊 R/R：{d['rr']}
+
+━━━━━━━━━━━━━━
+📰 新聞：
+{news}
 """
-
-# ======================
-# LOOP
-# ======================
-def loop():
-    while True:
-        try:
-            now = time.time()
-
-            for s in SWING_STOCKS:
-                d = get_data(s)
-                if not d:
-                    continue
-
-                mt = mtf(s)
-                if not mt:
-                    continue
-
-                trend4, trend1, timing, pullback = mt
-
-                state = signal_state.get(s, {"setup":0,"entry":0,"zone":None})
-                zone = f"{d['entry_low']}-{d['entry_high']}"
-
-                if not (trend4 and trend1):
-                    continue
-
-                # SETUP
-                if d["price"] > d["entry_high"] and d["rr"] > 2:
-                    if now - state["setup"] > SETUP_COOLDOWN and zone != state["zone"]:
-                        send(CHAT_ID,f"👀 {s} Setup\n{zone}")
-                        state["setup"]=now
-                        state["zone"]=zone
-
-                # ENTRY
-                if d["entry_low"] <= d["price"] <= d["entry_high"] and timing:
-                    if now - state["entry"] > ENTRY_COOLDOWN:
-                        send(CHAT_ID,f"🚀 {s} Entry\n{zone}")
-                        state["entry"]=now
-
-                signal_state[s]=state
-
-            time.sleep(300)
-
-        except Exception as e:
-            print("LOOP ERROR:", e)
-
-threading.Thread(target=loop,daemon=True).start()
-
-# ======================
-# TOOLS
-# ======================
-def calc(x):
-    x=float(x)
-    return f"+10% → {round(x*1.1,2)}\n-10% → {round(x*0.9,2)}"
-
-def position(symbol,entry):
-    d = get_data(symbol)
-    if not d:
-        return "無數據"
-    price = d["price"]
-    pnl = (price-entry)/entry*100
-    return f"{symbol} 盈虧：{round(pnl,2)}%"
 
 # ======================
 # LONG TERM
@@ -274,12 +298,58 @@ def long_term():
 💰【長線投資】
 
 📊 MSFT：
-👉 回調加倉
+👉 回調（-5% / -10%）加倉
 
 📈 S&P500：
-👉 每月DCA
+👉 每月定期買（DCA）
 👉 長期持有
 """
+
+# ======================
+# LOOP
+# ======================
+def loop():
+    while True:
+        try:
+            now = time.time()
+            _, market_ok = market_trend()
+
+            for s in SWING_STOCKS:
+                d, _ = get_data(s)
+                if not d: continue
+
+                mtf_data,_ = mtf(s)
+                if not mtf_data: continue
+
+                trend_4h, trend_1h, pullback = mtf_data
+
+                if not (trend_4h and trend_1h and market_ok):
+                    continue
+
+                state = signal_state.get(s, {"setup":0,"entry":0,"zone":None})
+                zone = f"{d['entry_low']}-{d['entry_high']}"
+
+                if d["price"] > d["entry_high"] and d["rr"] > 2:
+                    if now - state["setup"] > SETUP_COOLDOWN and zone != state["zone"]:
+                        send(CHAT_ID,f"👀 {s} Setup\n{zone}")
+                        state["setup"] = now
+                        state["zone"] = zone
+
+                in_range = d["entry_low"] <= d["price"] <= d["entry_high"]
+
+                if in_range and entry(s):
+                    if now - state["entry"] > ENTRY_COOLDOWN:
+                        send(CHAT_ID,f"🚀 {s} Entry\n{zone}")
+                        state["entry"] = now
+
+                signal_state[s] = state
+
+            time.sleep(600)
+
+        except Exception as e:
+            print("LOOP ERROR:", e)
+
+threading.Thread(target=loop,daemon=True).start()
 
 # ======================
 # WEBHOOK
@@ -287,37 +357,27 @@ def long_term():
 @app.route("/",methods=["POST"])
 def webhook():
     data=request.get_json()
-
     if not data or "message" not in data:
         return "ok"
 
     chat_id=data["message"]["chat"]["id"]
-    text=data["message"].get("text","")
+    text=data["message"].get("text","").strip()
 
     if text in ["/start","start"]:
-        send(chat_id,"🚀 V30 TwelveData",menu())
+        send(chat_id,"🚀 V30.2 Hybrid 穩定版",menu())
 
     elif "波段分析" in text:
+        sent = False
         for s in SWING_STOCKS:
-            d=get_data(s)
+            d, fb = get_data(s)
             if d:
-                send(chat_id,format_full(s,d),menu())
+                send(chat_id,format_full(s,d,fb),menu())
+                sent = True
+        if not sent:
+            send(chat_id,"⚠️ 暫時無數據（API限制）",menu())
 
     elif "長線投資" in text:
         send(chat_id,long_term(),menu())
-
-    elif "計算工具" in text:
-        send(chat_id,"輸入數字，例如 300",menu())
-
-    elif text.replace('.','',1).isdigit():
-        send(chat_id,calc(text),menu())
-
-    elif "持倉分析" in text:
-        send(chat_id,"輸入：TSLA 300",menu())
-
-    elif len(text.split())==2:
-        s,p=text.split()
-        send(chat_id,position(s.upper(),float(p)),menu())
 
     return "ok"
 
