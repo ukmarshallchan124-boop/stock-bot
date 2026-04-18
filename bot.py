@@ -43,7 +43,7 @@ def menu():
 def market_trend():
     try:
         spy = yf.Ticker("SPY").history(period="5d", interval="1d")
-        if spy.empty:
+        if spy is None or spy.empty or len(spy)<3:
             return "⚪ 市場未知", True
 
         change = (spy["Close"].iloc[-1] - spy["Close"].iloc[-3]) / spy["Close"].iloc[-3] * 100
@@ -54,7 +54,8 @@ def market_trend():
             return "📉 美股偏弱（Risk OFF）", False
         else:
             return "⚪ 市場震盪", True
-    except:
+    except Exception as e:
+        print("market error:", e)
         return "⚪ 市場未知", True
 
 # ======================
@@ -65,11 +66,14 @@ def get_news(symbol):
         news = yf.Ticker(symbol).news or []
         news = news[:3]
 
+        if not news:
+            return "⚪ 無新聞"
+
         score = 0
         txt = ""
 
         for n in news:
-            title = n["title"]
+            title = n.get("title","")
             if any(w in title.lower() for w in ["beat","growth","strong","ai"]):
                 score += 1
                 txt += f"🟢 {title}\n"
@@ -82,7 +86,8 @@ def get_news(symbol):
         summary = "🟢 偏利好" if score>0 else "🔴 偏利淡" if score<0 else "⚪ 中性"
         return txt + f"\n🧠 新聞總結：{summary}"
 
-    except:
+    except Exception as e:
+        print("news error:", e)
         return "⚪ 無新聞"
 
 # ======================
@@ -96,8 +101,11 @@ def load_trades():
         return []
 
 def save_trades(data):
-    with open(TRADE_FILE,"w") as f:
-        json.dump(data,f)
+    try:
+        with open(TRADE_FILE,"w") as f:
+            json.dump(data,f)
+    except:
+        pass
 
 def get_winrate(symbol):
     trades = load_trades()
@@ -123,105 +131,132 @@ def record_trade(symbol, entry, stop, target):
 # INDICATORS
 # ======================
 def indicators(df):
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
-    rsi = (100-(100/(1+rs))).iloc[-1]
+    try:
+        if df is None or df.empty or len(df)<30:
+            return 50,"⚪ 無數據"
 
-    ema12 = df["Close"].ewm(span=12).mean()
-    ema26 = df["Close"].ewm(span=26).mean()
-    macd_line = ema12 - ema26
-    signal = macd_line.ewm(span=9).mean()
+        delta = df["Close"].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        rs = gain.rolling(14).mean()/loss.rolling(14).mean()
+        rsi = (100-(100/(1+rs))).iloc[-1]
 
-    macd = "🟢 上升動能" if macd_line.iloc[-1] > signal.iloc[-1] else "🔴 下跌動能"
+        ema12 = df["Close"].ewm(span=12).mean()
+        ema26 = df["Close"].ewm(span=26).mean()
+        macd_line = ema12 - ema26
+        signal = macd_line.ewm(span=9).mean()
 
-    return round(rsi,1), macd
+        macd = "🟢 上升動能" if macd_line.iloc[-1] > signal.iloc[-1] else "🔴 下跌動能"
+
+        return round(rsi,1), macd
+    except:
+        return 50,"⚪ 無數據"
 
 # ======================
 # MTF
 # ======================
 def mtf_trend(symbol):
-    df_1h = yf.Ticker(symbol).history(period="30d", interval="1h")
-    if df_1h.empty:
+    try:
+        df_1h = yf.Ticker(symbol).history(period="30d", interval="1h")
+
+        if df_1h is None or df_1h.empty or len(df_1h)<50:
+            return None
+
+        df_4h = df_1h.resample("4H").last().dropna()
+        if df_4h.empty:
+            return None
+
+        ema50_4h = df_4h["Close"].ewm(span=50).mean()
+        ema20_1h = df_1h["Close"].ewm(span=20).mean()
+
+        mom_4h = df_4h["Close"].diff().iloc[-3:].mean()
+
+        trend_4h = df_4h["Close"].iloc[-1] > ema50_4h.iloc[-1] and mom_4h > 0
+        trend_1h = df_1h["Close"].iloc[-1] > ema20_1h.iloc[-1]
+
+        pullback = df_1h["Close"].iloc[-1] < df_1h["Close"].rolling(10).max().iloc[-1]
+
+        return trend_4h, trend_1h, pullback
+
+    except Exception as e:
+        print("mtf error:", e)
         return None
 
-    df_4h = df_1h.resample("4H").last().dropna()
-    if df_4h.empty:
-        return None
-
-    ema50_4h = df_4h["Close"].ewm(span=50).mean()
-    ema20_1h = df_1h["Close"].ewm(span=20).mean()
-
-    mom_4h = df_4h["Close"].diff().iloc[-3:].mean()
-
-    trend_4h = df_4h["Close"].iloc[-1] > ema50_4h.iloc[-1] and mom_4h > 0
-    trend_1h = df_1h["Close"].iloc[-1] > ema20_1h.iloc[-1]
-
-    pullback = df_1h["Close"].iloc[-1] < df_1h["Close"].rolling(10).max().iloc[-1]
-
-    return trend_4h, trend_1h, pullback
-
+# ======================
+# 15m ENTRY
+# ======================
 def entry_15m(symbol):
-    df = yf.Ticker(symbol).history(period="5d", interval="15m")
-    if df.empty:
+    try:
+        df = yf.Ticker(symbol).history(period="5d", interval="15m")
+
+        if df is None or df.empty or len(df)<30:
+            return False
+
+        ema9 = df["Close"].ewm(span=9).mean()
+        ema21 = df["Close"].ewm(span=21).mean()
+        momentum = df["Close"].diff().iloc[-3:].mean()
+
+        return ema9.iloc[-1] > ema21.iloc[-1] and momentum > 0
+
+    except:
         return False
-
-    ema9 = df["Close"].ewm(span=9).mean()
-    ema21 = df["Close"].ewm(span=21).mean()
-    momentum = df["Close"].diff().iloc[-3:].mean()
-
-    return ema9.iloc[-1] > ema21.iloc[-1] and momentum > 0
 
 # ======================
 # BASE DATA
 # ======================
 def get_data(symbol):
-    df = yf.Ticker(symbol).history(period="5d", interval="15m")
-    if df.empty:
+    try:
+        df = yf.Ticker(symbol).history(period="5d", interval="15m")
+
+        if df is None or df.empty or len(df)<30:
+            return None
+
+        price = df["Close"].iloc[-1]
+        high = df["High"].max()
+        low = df["Low"].min()
+
+        entry_low = low*1.01
+        entry_high = low*1.03
+        stop = low*0.97
+        target = high*1.02
+        rr = (target-entry_low)/(entry_low-stop)
+
+        return {
+            "price":round(price,2),
+            "entry_low":round(entry_low,2),
+            "entry_high":round(entry_high,2),
+            "stop":round(stop,2),
+            "target":round(target,2),
+            "rr":round(rr,2)
+        }
+
+    except Exception as e:
+        print("data error:", symbol, e)
         return None
 
-    price = df["Close"].iloc[-1]
-    high = df["High"].max()
-    low = df["Low"].min()
-
-    entry_low = low*1.01
-    entry_high = low*1.03
-    stop = low*0.97
-    target = high*1.02
-    rr = (target-entry_low)/(entry_low-stop)
-
-    return {
-        "price":round(price,2),
-        "entry_low":round(entry_low,2),
-        "entry_high":round(entry_high,2),
-        "stop":round(stop,2),
-        "target":round(target,2),
-        "rr":round(rr,2)
-    }
-
 # ======================
-# FULL ANALYSIS UI
+# FORMAT FULL
 # ======================
 def format_full(symbol, d):
-    df = yf.Ticker(symbol).history(period="5d", interval="15m")
-    rsi, macd = indicators(df)
+    try:
+        df = yf.Ticker(symbol).history(period="5d", interval="15m")
+        rsi, macd = indicators(df)
 
-    mtf = mtf_trend(symbol)
-    if not mtf:
-        return "無數據"
+        mtf = mtf_trend(symbol)
+        if not mtf:
+            return f"{symbol} 無數據"
 
-    trend_4h, trend_1h, pullback = mtf
+        trend_4h, trend_1h, pullback = mtf
 
-    trend4 = "🟢 上升趨勢" if trend_4h else "🔴 下跌趨勢"
-    trend1 = "🟡 回調中" if pullback else "🟢 延續中"
-    timing = "🟢 轉強" if entry_15m(symbol) else "⚪ 未確認"
+        trend4 = "🟢 上升趨勢" if trend_4h else "🔴 下跌趨勢"
+        trend1 = "🟡 回調中" if pullback else "🟢 延續中"
+        timing = "🟢 轉強" if entry_15m(symbol) else "⚪ 未確認"
 
-    win = get_winrate(symbol)
-    news = get_news(symbol)
-    market_text,_ = market_trend()
+        win = get_winrate(symbol)
+        news = get_news(symbol)
+        market_text,_ = market_trend()
 
-    return f"""
+        return f"""
 📊【{symbol} 波段分析｜MTF】
 
 💰 價格：{d['price']}
@@ -257,37 +292,9 @@ MACD：{macd}
 📰 新聞：
 {news}
 """
-
-# ======================
-# SETUP / ENTRY
-# ======================
-def format_setup(symbol, d, trend_4h, trend_1h, pullback):
-    return f"""
-👀【{symbol} Setup】
-
-📉 回調區：
-{d['entry_low']} - {d['entry_high']}
-
-👉 4H：{"上升" if trend_4h else "轉弱"}
-👉 1H：{"回調中" if pullback else "延續"}
-👉 R/R：{d['rr']}
-
-⏳ 等 15m 確認
-"""
-
-def format_entry(symbol, d):
-    risk = round(((d["entry_low"] - d["stop"]) / d["entry_low"]) * 100,2)
-
-    return f"""
-🚀【{symbol} Entry】
-
-👉 入場：{d['entry_low']} - {d['entry_high']}
-
-🛑 止蝕：{d['stop']}
-🎯 目標：{d['target']}
-
-⚠️ 風險：約 {risk}%
-"""
+    except Exception as e:
+        print("format error:", e)
+        return f"{symbol} error"
 
 # ======================
 # LONG TERM
@@ -305,7 +312,7 @@ def long_term():
 """
 
 # ======================
-# LOOP（含 zone 防重複）
+# LOOP
 # ======================
 def loop():
     while True:
@@ -331,7 +338,7 @@ def loop():
 
                 if d["price"] > d["entry_high"] and d["rr"] > 2:
                     if now - state["setup"] > SETUP_COOLDOWN and zone != state["zone"]:
-                        send(CHAT_ID, format_setup(s,d,trend_4h,trend_1h,pullback))
+                        send(CHAT_ID, f"👀 {s} Setup\n{zone}")
                         state["setup"] = now
                         state["zone"] = zone
 
@@ -339,12 +346,9 @@ def loop():
 
                 if in_range and confirm:
                     if now - state["entry"] > ENTRY_COOLDOWN:
-                        send(CHAT_ID, format_entry(s,d))
+                        send(CHAT_ID, f"🚀 {s} Entry\n{zone}")
                         record_trade(s,d["entry_low"],d["stop"],d["target"])
                         state["entry"] = now
-
-                if not in_range:
-                    state["entry"] = 0
 
                 signal_state[s] = state
 
@@ -363,54 +367,60 @@ def calc(x):
     return f"+10% → {round(x*1.1,2)}\n-10% → {round(x*0.9,2)}"
 
 def position(symbol,entry):
-    df=yf.Ticker(symbol).history(period="1d")
-    if df.empty:
-        return "無數據"
-    price=df["Close"].iloc[-1]
-    pnl=(price-entry)/entry*100
-    return f"{symbol} 盈虧：{round(pnl,2)}%"
+    try:
+        df=yf.Ticker(symbol).history(period="1d")
+        if df.empty:
+            return "無數據"
+        price=df["Close"].iloc[-1]
+        pnl=(price-entry)/entry*100
+        return f"{symbol} 盈虧：{round(pnl,2)}%"
+    except:
+        return "計算錯誤"
 
 # ======================
 # WEBHOOK
 # ======================
 @app.route("/",methods=["POST"])
 def webhook():
-    data=request.get_json()
-    if not data or "message" not in data:
+    try:
+        data=request.get_json()
+
+        if not data or "message" not in data:
+            return "ok"
+
+        chat_id=data["message"]["chat"]["id"]
+        text=data["message"].get("text","").strip()
+
+        if text in ["/start","start"]:
+            send(chat_id,"🚀 V29 穩定版",menu())
+
+        elif "波段分析" in text:
+            for s in SWING_STOCKS:
+                d=get_data(s)
+                if d:
+                    send(chat_id,format_full(s,d),menu())
+
+        elif "長線投資" in text:
+            send(chat_id,long_term(),menu())
+
+        elif "計算工具" in text:
+            send(chat_id,"輸入數字，例如 300",menu())
+
+        elif text.replace('.','',1).isdigit():
+            send(chat_id,calc(text),menu())
+
+        elif "持倉分析" in text:
+            send(chat_id,"輸入：TSLA 300",menu())
+
+        elif len(text.split())==2:
+            s,p=text.split()
+            send(chat_id,position(s.upper(),float(p)),menu())
+
         return "ok"
 
-    chat_id=data["message"]["chat"]["id"]
-    text=data["message"].get("text","").strip()
-
-    if text in ["/start","start"]:
-        send(chat_id,"🚀 V28.7 FINAL",menu())
-
-    elif "波段分析" in text:
-        for s in SWING_STOCKS:
-            d=get_data(s)
-            if d:
-                send(chat_id,format_full(s,d),menu())
-
-    elif "長線投資" in text:
-        send(chat_id,long_term(),menu())
-
-    elif "計算工具" in text:
-        send(chat_id,"輸入數字，例如 300",menu())
-
-    elif text.replace('.','',1).isdigit():
-        send(chat_id,calc(text),menu())
-
-    elif "持倉分析" in text:
-        send(chat_id,"輸入：TSLA 300",menu())
-
-    elif len(text.split())==2:
-        s,p=text.split()
-        try:
-            send(chat_id,position(s.upper(),float(p)),menu())
-        except:
-            pass
-
-    return "ok"
+    except Exception as e:
+        print("WEBHOOK ERROR:", e)
+        return "ok"
 
 @app.route("/")
 def home():
