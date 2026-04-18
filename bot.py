@@ -128,11 +128,11 @@ def record_trade(symbol, entry, stop, target):
     save_trades(trades)
 
 # ======================
-# INDICATORS
+# INDICATORS（修復）
 # ======================
 def indicators(df):
     try:
-        if df is None or df.empty or len(df)<30:
+        if df is None or df.empty:
             return 50,"⚪ 無數據"
 
         delta = df["Close"].diff()
@@ -153,13 +153,13 @@ def indicators(df):
         return 50,"⚪ 無數據"
 
 # ======================
-# MTF
+# MTF（修復）
 # ======================
 def mtf_trend(symbol):
     try:
         df_1h = yf.Ticker(symbol).history(period="30d", interval="1h")
 
-        if df_1h is None or df_1h.empty or len(df_1h)<50:
+        if df_1h is None or df_1h.empty:
             return None
 
         df_4h = df_1h.resample("4H").last().dropna()
@@ -183,13 +183,13 @@ def mtf_trend(symbol):
         return None
 
 # ======================
-# 15m ENTRY
+# ENTRY 15m
 # ======================
 def entry_15m(symbol):
     try:
         df = yf.Ticker(symbol).history(period="5d", interval="15m")
 
-        if df is None or df.empty or len(df)<30:
+        if df is None or df.empty:
             return False
 
         ema9 = df["Close"].ewm(span=9).mean()
@@ -202,13 +202,13 @@ def entry_15m(symbol):
         return False
 
 # ======================
-# BASE DATA
+# DATA（修復核心🔥）
 # ======================
 def get_data(symbol):
     try:
         df = yf.Ticker(symbol).history(period="5d", interval="15m")
 
-        if df is None or df.empty or len(df)<30:
+        if df is None or df.empty:
             return None
 
         price = df["Close"].iloc[-1]
@@ -336,12 +336,14 @@ def loop():
                 if not (trend_4h and trend_1h and market_ok):
                     continue
 
+                # SETUP（防重複）
                 if d["price"] > d["entry_high"] and d["rr"] > 2:
                     if now - state["setup"] > SETUP_COOLDOWN and zone != state["zone"]:
                         send(CHAT_ID, f"👀 {s} Setup\n{zone}")
                         state["setup"] = now
                         state["zone"] = zone
 
+                # ENTRY
                 in_range = d["entry_low"] <= d["price"] <= d["entry_high"]
 
                 if in_range and confirm:
@@ -349,6 +351,9 @@ def loop():
                         send(CHAT_ID, f"🚀 {s} Entry\n{zone}")
                         record_trade(s,d["entry_low"],d["stop"],d["target"])
                         state["entry"] = now
+
+                if not in_range:
+                    state["entry"] = 0
 
                 signal_state[s] = state
 
@@ -392,7 +397,7 @@ def webhook():
         text=data["message"].get("text","").strip()
 
         if text in ["/start","start"]:
-            send(chat_id,"🚀 V29 穩定版",menu())
+            send(chat_id,"🚀 V29.1 修復版",menu())
 
         elif "波段分析" in text:
             for s in SWING_STOCKS:
