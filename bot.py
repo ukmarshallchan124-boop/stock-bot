@@ -1,5 +1,5 @@
 from flask import Flask, request
-import requests, os, time, threading
+import requests, os, threading
 import yfinance as yf
 import pandas as pd
 
@@ -11,11 +11,6 @@ URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SWING_STOCKS = ["TSLA","NVDA","AMD"]
 
-signal_state = {}
-
-SETUP_COOLDOWN = 1800
-ENTRY_COOLDOWN = 3600
-
 # ======================
 # SEND
 # ======================
@@ -24,9 +19,7 @@ def send(chat_id, text, keyboard=None):
         data = {"chat_id": chat_id, "text": text[:4000]}
         if keyboard:
             data["reply_markup"] = keyboard
-        r = requests.post(f"{URL}/sendMessage", json=data, timeout=10)
-        if r.status_code != 200:
-            print("TG ERROR:", r.text)
+        requests.post(f"{URL}/sendMessage", json=data, timeout=10)
     except Exception as e:
         print("SEND ERROR:", e)
 
@@ -67,9 +60,7 @@ def fetch(symbol, interval):
         df = yf.Ticker(symbol).history(period="5d", interval=interval)
         if df.empty:
             df = yf.Ticker(symbol).history(period="1mo", interval="1d")
-        if df.empty:
-            return None
-        return df
+        return df if not df.empty else None
     except:
         return None
 
@@ -91,9 +82,9 @@ def indicators(df):
         macd_line = ema12 - ema26
         signal = macd_line.ewm(span=9).mean()
 
-        macd_raw = macd_line.iloc[-1] - signal.iloc[-1]
+        macd = macd_line.iloc[-1] - signal.iloc[-1]
 
-        return rsi, macd_raw
+        return rsi, macd
     except:
         return "N/A", 0
 
@@ -118,7 +109,7 @@ def mtf(symbol):
     return trend_4h, trend_1h, pullback
 
 # ======================
-# AI SCORE（強化）
+# AI SCORE
 # ======================
 def ai_score(df, symbol):
     score = 50
@@ -141,7 +132,7 @@ def ai_score(df, symbol):
     else:
         score -= 5
 
-    market, mscore = market_trend()
+    _, mscore = market_trend()
     score += mscore
 
     return max(0, min(100, score))
@@ -208,15 +199,12 @@ def get_data(symbol):
     }
 
 # ======================
-# POSITION SIZE（新🔥）
+# POSITION SIZE
 # ======================
-def position_size(entry, stop, account=1000, risk_pct=1):
-    risk = account * (risk_pct/100)
+def position_size(entry, stop):
+    risk = 1000 * 0.01
     per_share = abs(entry - stop)
-    if per_share == 0:
-        return 0
-    size = risk / per_share
-    return round(size,2)
+    return round(risk / per_share,2) if per_share else 0
 
 # ======================
 # FORMAT
@@ -227,7 +215,6 @@ def format_output(symbol,d,df):
 
     rsi,macd_raw = indicators(df)
     macd = "🟢 偏強" if macd_raw>0 else "🔴 偏弱"
-
     timing = "🟢 可留意" if macd_raw>0 else "❌ 唔好追"
 
     news_txt,news_summary = get_news(symbol)
@@ -262,7 +249,7 @@ MACD：{macd}
 👉 目標：{d['target']}
 
 📊 R/R：{d['rr']}
-💰 倉位建議：約 {size} 股（1%風險）
+💰 倉位：約 {size} 股
 
 ━━━━━━━━━━━━━━━
 
@@ -282,9 +269,9 @@ MACD：{macd}
 """
 
 # ======================
-# AUTO PUSH（用 cron 打）
+# AUTO PUSH（cron）
 # ======================
-@app.route("/")
+@app.route("/", methods=["GET"])
 def auto():
     threading.Thread(target=run_auto).start()
     return "ok"
@@ -292,13 +279,10 @@ def auto():
 def run_auto():
     for s in SWING_STOCKS:
         data = get_data(s)
-        if not data: continue
-
-        df,d = data
-        score = ai_score(df,s)
-
-        if score >= 75:
-            send(CHAT_ID, format_output(s,d,df))
+        if data:
+            df,d=data
+            if ai_score(df,s) >= 75:
+                send(CHAT_ID, format_output(s,d,df))
 
 # ======================
 # TOOLS
@@ -322,7 +306,7 @@ def long_term():
 # ======================
 # WEBHOOK
 # ======================
-@app.route("/",methods=["POST"])
+@app.route("/", methods=["POST"])
 def webhook():
     data=request.get_json()
     if not data or "message" not in data:
@@ -332,7 +316,7 @@ def webhook():
     text=data["message"].get("text","").strip()
 
     if text in ["/start","start"]:
-        send(chat_id,"🚀 V35 PRO",menu())
+        send(chat_id,"🚀 V35.1 PRO FIX",menu())
 
     elif "波段分析" in text:
         for s in SWING_STOCKS:
@@ -352,3 +336,9 @@ def webhook():
         send(chat_id,position(s.upper(),float(p)),menu())
 
     return "ok"
+
+# ======================
+# RUN
+# ======================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
