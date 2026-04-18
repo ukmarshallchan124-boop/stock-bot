@@ -8,7 +8,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
-SWING_STOCKS = ["TSLA","NVDA","AMD","MSFT"]
+# ❗ 修正：移除 MSFT（只做長線）
+SWING_STOCKS = ["TSLA","NVDA","AMD"]
 
 TRADE_FILE = "trades.json"
 signal_state = {}
@@ -81,7 +82,7 @@ def get_news(symbol):
         return "⚪ 無新聞"
 
 # ======================
-# 勝率
+# 勝率 tracking
 # ======================
 def load_trades():
     try:
@@ -114,7 +115,7 @@ def record_trade(symbol, entry, stop, target):
     save_trades(trades)
 
 # ======================
-# MTF（修復版）
+# MTF（4H / 1H）
 # ======================
 def mtf_trend(symbol):
     df_1h = yf.Ticker(symbol).history(period="30d", interval="1h")
@@ -127,7 +128,6 @@ def mtf_trend(symbol):
     ema20_1h = df_1h["Close"].ewm(span=20).mean()
 
     mom_4h = df_4h["Close"].diff().iloc[-3:].mean()
-    mom_1h = df_1h["Close"].diff().iloc[-3:].mean()
 
     trend_4h = df_4h["Close"].iloc[-1] > ema50_4h.iloc[-1] and mom_4h > 0
     trend_1h = df_1h["Close"].iloc[-1] > ema20_1h.iloc[-1]
@@ -136,6 +136,9 @@ def mtf_trend(symbol):
 
     return trend_4h, trend_1h, pullback
 
+# ======================
+# 15m Entry
+# ======================
 def entry_15m(symbol):
     df = yf.Ticker(symbol).history(period="5d", interval="15m")
     if df.empty: return False
@@ -147,7 +150,7 @@ def entry_15m(symbol):
     return ema9.iloc[-1] > ema21.iloc[-1] and momentum > 0
 
 # ======================
-# RSI + MACD
+# 指標
 # ======================
 def indicators(df):
     delta = df["Close"].diff()
@@ -192,24 +195,21 @@ def get_data(symbol):
     }
 
 # ======================
-# Setup 分級
-# ======================
-def setup_grade(d, trend_4h, pullback):
-    score = 0
-    if d["rr"] > 2.5: score += 2
-    if trend_4h: score += 2
-    if pullback: score += 1
-
-    if score >=4: return "🟣 強"
-    elif score >=2: return "🟡 中"
-    else: return "🔴 弱"
-
-# ======================
-# 波段分析 UI
+# 波段 UI（專業版🔥）
 # ======================
 def format_full(symbol, d):
     df = yf.Ticker(symbol).history(period="5d", interval="15m")
     rsi, macd = indicators(df)
+
+    mtf = mtf_trend(symbol)
+    if not mtf:
+        return "無數據"
+
+    trend_4h, trend_1h, pullback = mtf
+
+    trend4 = "🟢 上升趨勢" if trend_4h else "🔴 下跌趨勢"
+    trend1 = "🟡 回調中" if pullback else "🟢 延續中"
+    timing = "🟢 轉強" if entry_15m(symbol) else "⚪ 未確認"
 
     win = get_winrate(symbol)
     news = get_news(symbol)
@@ -224,15 +224,23 @@ def format_full(symbol, d):
 
 ━━━━━━━━━━━━━━
 
-RSI：{rsi}
-MACD：{macd}
+📈 大方向（4H）：
+{trend4}
+
+📊 主趨勢（1H）：
+{trend1}
+
+⚡ Timing（15m）：
+{timing}
 
 ━━━━━━━━━━━━━━
 
 📉 支撐：{d['entry_low']}
 📈 阻力：{d['target']}
 
-🎯 策略：
+━━━━━━━━━━━━━━
+
+🎯 策略（重點🔥）
 
 👉 入場：{d['entry_low']} - {d['entry_high']}
 👉 止蝕：{d['stop']}
@@ -242,12 +250,20 @@ MACD：{macd}
 
 ━━━━━━━━━━━━━━
 
+📌 行動建議：
+
+✔ 等回調
+✔ 等確認
+❌ 唔好追
+
+━━━━━━━━━━━━━━
+
 📰 新聞：
 {news}
 """
 
 # ======================
-# 長線 MSFT
+# 長線（MSFT + S&P500）
 # ======================
 def msft_long():
     df_d = yf.Ticker("MSFT").history(period="1y", interval="1d")
@@ -260,18 +276,35 @@ def msft_long():
     trend_w = "🟢 長期上升" if df_w["Close"].iloc[-1] > ema_w.iloc[-1] else "🔴 長期轉弱"
 
     return f"""
-💰【MSFT 長線】
+💰【長線投資】
 
-📊 週線：{trend_w}
-📊 日線：{trend_d}
+📊 MSFT：
+
+週線：{trend_w}
+日線：{trend_d}
 
 👉 策略：
 ✔ 長線持有
 ✔ 回調加倉
+
+━━━━━━━━━━━━━━
+
+📈 S&P500（VOO / SPY / VUAG）
+
+👉 每月定期買（DCA）
+👉 唔需要等跌
+👉 長期持有
+
+━━━━━━━━━━━━━━
+
+🧠 結論：
+
+👉 MSFT：等回調加
+👉 S&P500：持續買
 """
 
 # ======================
-# LOOP（核心🔥）
+# LOOP（Setup + Entry）
 # ======================
 def loop():
     while True:
@@ -282,9 +315,6 @@ def loop():
             for s in SWING_STOCKS:
                 d = get_data(s)
                 if not d: continue
-
-                df = yf.Ticker(s).history(period="5d", interval="15m")
-                rsi, macd = indicators(df)
 
                 mtf = mtf_trend(s)
                 if not mtf: continue
@@ -297,20 +327,10 @@ def loop():
                 if not (trend_4h and trend_1h and market_ok):
                     continue
 
-                grade = setup_grade(d, trend_4h, pullback)
-
                 # SETUP
-                if d["price"] > d["entry_high"] and grade != "🔴 弱":
+                if d["price"] > d["entry_high"]:
                     if now - state["setup"] > SETUP_COOLDOWN:
-                        send(CHAT_ID,f"""👀【{s} {grade} Setup】
-
-📉 {d['entry_low']} - {d['entry_high']}
-
-RSI：{rsi}
-MACD：{macd}
-
-👉 等 confirmation
-""")
+                        send(CHAT_ID,f"👀【{s} Setup】\n回調區：{d['entry_low']} - {d['entry_high']}")
                         state["setup"] = now
 
                 # ENTRY
@@ -318,14 +338,7 @@ MACD：{macd}
 
                 if in_range and confirm:
                     if now - state["entry"] > ENTRY_COOLDOWN:
-                        send(CHAT_ID,f"""🚀【{s} 入場確認】
-
-✔ MTF一致
-✔ 15m轉強
-✔ 動能支持
-
-👉 {d['entry_low']} - {d['entry_high']}
-""")
+                        send(CHAT_ID,f"🚀【{s} Entry】\n{d['entry_low']} - {d['entry_high']}")
                         record_trade(s,d["entry_low"],d["stop"],d["target"])
                         state["entry"] = now
 
@@ -364,7 +377,7 @@ def webhook():
     text=data["message"].get("text","")
 
     if text in ["/start","start"]:
-        send(chat_id,"🚀 V28.3 專業版",menu())
+        send(chat_id,"🚀 V28.3.1 專業版",menu())
 
     elif text=="📊 波段分析":
         for s in SWING_STOCKS:
