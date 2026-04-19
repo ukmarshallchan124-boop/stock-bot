@@ -43,7 +43,7 @@ def market_open():
     return 14 <= now.hour <= 21
 
 # ======================
-# FETCH
+# FETCH（真 retry）
 # ======================
 def fetch(symbol):
     key = symbol
@@ -52,37 +52,40 @@ def fetch(symbol):
     if key in cache and now - cache[key]["time"] < CACHE_TTL:
         return cache[key]["data"]
 
-    try:
-        if API_KEY:
-            url = "https://api.twelvedata.com/time_series"
-            params = {
-                "symbol": symbol,
-                "interval": "15min",
-                "outputsize": 100,
-                "apikey": API_KEY
-            }
-            r = requests.get(url, params=params, timeout=5).json()
+    for attempt in range(3):  # 🔥 真 retry
+        try:
+            if API_KEY:
+                url = "https://api.twelvedata.com/time_series"
+                params = {
+                    "symbol": symbol,
+                    "interval": "15min",
+                    "outputsize": 100,
+                    "apikey": API_KEY
+                }
+                r = requests.get(url, params=params, timeout=5).json()
 
-            if "values" in r:
-                df = pd.DataFrame(list(reversed(r["values"])))
-                df["close"] = df["close"].astype(float)
-                df["high"] = df["high"].astype(float)
-                df["low"] = df["low"].astype(float)
-                df["volume"] = df["volume"].astype(float)
+                if "values" in r:
+                    df = pd.DataFrame(list(reversed(r["values"])))
+                    df["close"] = df["close"].astype(float)
+                    df["high"] = df["high"].astype(float)
+                    df["low"] = df["low"].astype(float)
+                    df["volume"] = df["volume"].astype(float)
 
-                df.rename(columns={
-                    "close":"Close",
-                    "high":"High",
-                    "low":"Low",
-                    "volume":"Volume"
-                }, inplace=True)
+                    df.rename(columns={
+                        "close":"Close",
+                        "high":"High",
+                        "low":"Low",
+                        "volume":"Volume"
+                    }, inplace=True)
 
-                cache[key] = {"data": df, "time": now}
-                time.sleep(0.8)
-                return df
-    except:
-        pass
+                    cache[key] = {"data": df, "time": now}
+                    return df
+        except:
+            pass
 
+        time.sleep(1)
+
+    # Yahoo fallback
     try:
         df = yf.Ticker(symbol).history(period="5d", interval="15m")
         if not df.empty:
@@ -150,6 +153,7 @@ def get_news(symbol):
 def analyze(symbol):
     df = fetch(symbol)
     if df is None or len(df)<50:
+        send(CHAT_ID, f"⚠️【{symbol}】數據暫時不穩定\n👉 系統已自動重試中")
         return None
 
     price = df["Close"].iloc[-1]
@@ -228,7 +232,7 @@ Volume：{"🟢 放量" if volume_ok(df) else "⚪ 正常"}
 """
 
 # ======================
-# LOOP
+# LOOP（真 recovery）
 # ======================
 def loop():
     while True:
@@ -241,7 +245,8 @@ def loop():
 
             for s in SWING:
                 data = analyze(s)
-                if not data: continue
+                if not data:
+                    continue
 
                 df,d = data
                 if d["rr"] < 1.5:
@@ -256,20 +261,38 @@ def loop():
 
                 in_zone = d["entry_low"] <= d["price"] <= d["entry_high"]
 
+                # SETUP
                 if not in_zone and now-st["setup"]>SETUP_CD:
-                    send(CHAT_ID,f"👀【{s} Setup】\n回調區：{d['entry_low']}-{d['entry_high']}")
+                    send(CHAT_ID,f"""👀【{s} Setup】
+
+📉 回調區：{d['entry_low']}-{d['entry_high']}
+
+👉 未到位
+👉 等回調""")
                     st["setup"]=now
 
+                # ENTRY
                 if in_zone and not st["in_zone"]:
                     if momentum_ok(df) and volume_ok(df) and now-st["entry"]>ENTRY_CD:
-                        send(CHAT_ID,f"🚀【{s} 入場信號】\n入場區：{d['entry_low']}-{d['entry_high']}")
+                        send(CHAT_ID,f"""🚀【{s} 入場信號】
+
+👉 入場：{d['entry_low']}-{d['entry_high']}
+👉 止蝕：{d['stop']}
+👉 目標：{d['target']}
+
+👉 可小注入場""")
                         st["entry"]=now
 
                 st["in_zone"]=in_zone
 
+                # BREAKOUT
                 if d["price"]>d["target"] and volume_ok(df):
                     if now-st["breakout"]>BREAKOUT_CD:
-                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}\n👉 等回調再入")
+                        send(CHAT_ID,f"""🚀【{s} 突破】
+
+📈 {d['target']}
+
+👉 等回調再入""")
                         st["breakout"]=now
 
                 state[s]=st
@@ -278,6 +301,8 @@ def loop():
 
         except Exception as e:
             print("LOOP ERROR:", e)
+            send(CHAT_ID,"⚠️ 系統短暫波動\n👉 Bot 持續運作中")
+            time.sleep(10)
 
 threading.Thread(target=loop,daemon=True).start()
 
@@ -350,7 +375,7 @@ def long_term():
 💰【長線投資】
 
 📊 S&P500：
-👉 每月定投（DCA）
+👉 每月DCA
 
 📊 VWRA：
 👉 全球ETF
@@ -377,7 +402,7 @@ def webhook():
     text=data["message"].get("text","")
 
     if text=="/start":
-        send(chat_id,"🚀 Bot Ready")
+        send(chat_id,"🚀 Bot Ready（V40.5 穩定版）")
 
     elif text=="/check":
         for s in SWING:
@@ -406,6 +431,3 @@ def webhook():
 @app.route("/")
 def home():
     return "running"
-
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
