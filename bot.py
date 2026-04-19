@@ -11,7 +11,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
-SWING = ["TSLA","NVDA","AMD"]
+SWING = ["TSLA","NVDA","AMD","XOM","JPM"]
 
 cache = {}
 CACHE_TTL = 300
@@ -36,14 +36,14 @@ def send(chat_id, text):
         print("SEND ERROR:", e)
 
 # ======================
-# MARKET TIME（防收市亂推）
+# MARKET TIME
 # ======================
 def market_open():
     now = datetime.datetime.utcnow()
     return 14 <= now.hour <= 21
 
 # ======================
-# FETCH（Twelve + Yahoo）
+# FETCH
 # ======================
 def fetch(symbol):
     key = symbol
@@ -52,7 +52,6 @@ def fetch(symbol):
     if key in cache and now - cache[key]["time"] < CACHE_TTL:
         return cache[key]["data"]
 
-    # Twelve（主）
     try:
         if API_KEY:
             url = "https://api.twelvedata.com/time_series"
@@ -84,7 +83,6 @@ def fetch(symbol):
     except:
         pass
 
-    # Yahoo fallback
     try:
         df = yf.Ticker(symbol).history(period="5d", interval="15m")
         if not df.empty:
@@ -180,7 +178,7 @@ def analyze(symbol):
     }
 
 # ======================
-# FORMAT（核心）
+# FORMAT
 # ======================
 def format_output(symbol,d,df):
     news = get_news(symbol)
@@ -230,7 +228,7 @@ Volume：{"🟢 放量" if volume_ok(df) else "⚪ 正常"}
 """
 
 # ======================
-# LOOP（自動推送）
+# LOOP
 # ======================
 def loop():
     while True:
@@ -258,23 +256,20 @@ def loop():
 
                 in_zone = d["entry_low"] <= d["price"] <= d["entry_high"]
 
-                # SETUP
                 if not in_zone and now-st["setup"]>SETUP_CD:
-                    send(CHAT_ID,f"👀【{s} Setup】\n等待回調至 {d['entry_low']}-{d['entry_high']}")
+                    send(CHAT_ID,f"👀【{s} Setup】\n回調區：{d['entry_low']}-{d['entry_high']}")
                     st["setup"]=now
 
-                # ENTRY
                 if in_zone and not st["in_zone"]:
                     if momentum_ok(df) and volume_ok(df) and now-st["entry"]>ENTRY_CD:
-                        send(CHAT_ID,f"🚀【{s} 入場信號】\n區間 {d['entry_low']}-{d['entry_high']}")
+                        send(CHAT_ID,f"🚀【{s} 入場信號】\n入場區：{d['entry_low']}-{d['entry_high']}")
                         st["entry"]=now
 
                 st["in_zone"]=in_zone
 
-                # BREAKOUT
                 if d["price"]>d["target"] and volume_ok(df):
                     if now-st["breakout"]>BREAKOUT_CD:
-                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}\n👉 等回調先入")
+                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}\n👉 等回調再入")
                         st["breakout"]=now
 
                 state[s]=st
@@ -287,7 +282,7 @@ def loop():
 threading.Thread(target=loop,daemon=True).start()
 
 # ======================
-# CALC（防呆）
+# CALC
 # ======================
 def calc_flow(chat_id, text):
     if user_state.get(chat_id)!="calc":
@@ -315,7 +310,7 @@ def calc_flow(chat_id, text):
         send(chat_id,"請輸入數字")
 
 # ======================
-# POSITION（防呆）
+# POSITION
 # ======================
 def position_flow(chat_id, text):
     if user_state.get(chat_id)!="pos":
@@ -352,18 +347,22 @@ def position_flow(chat_id, text):
 # ======================
 def long_term():
     return """
-💰【長線】
+💰【長線投資】
 
-S&P500：
-👉 每月DCA
-👉 穩定增長
+📊 S&P500：
+👉 每月定投（DCA）
 
-MSFT：
-👉 AI龍頭
+📊 VWRA：
+👉 全球ETF
+
+📊 MSFT：
 👉 等回調5-10%
 
-👉 S&P = 地基
-👉 MSFT = 增長
+━━━━━━━━━━━━━━━
+
+👉 50% S&P500
+👉 30% VWRA
+👉 20% MSFT
 """
 
 # ======================
