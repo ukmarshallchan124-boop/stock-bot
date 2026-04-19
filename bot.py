@@ -20,8 +20,8 @@ def send(chat_id, msg):
             "chat_id": chat_id,
             "text": msg[:4000]
         })
-    except:
-        pass
+    except Exception as e:
+        print("send error:", e)
 
 # ======================
 # DATA
@@ -32,61 +32,77 @@ def get_df(symbol, interval):
         if df is None or df.empty:
             return None
         return df
-    except:
+    except Exception as e:
+        print("data error:", e)
         return None
 
+# ======================
+# CALC
+# ======================
 def calc(df):
-    price = float(df["Close"].iloc[-1])
+    try:
+        price = float(df["Close"].iloc[-1])
 
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
-    rsi = float((100-(100/(1+rs))).iloc[-1])
+        delta = df["Close"].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        rs = gain.rolling(14).mean()/loss.rolling(14).mean()
+        rsi = float((100-(100/(1+rs))).iloc[-1])
 
-    ema12 = df["Close"].ewm(span=12).mean()
-    ema26 = df["Close"].ewm(span=26).mean()
-    macd_line = ema12 - ema26
-    signal = macd_line.ewm(span=9).mean()
+        ema12 = df["Close"].ewm(span=12).mean()
+        ema26 = df["Close"].ewm(span=26).mean()
+        macd_line = ema12 - ema26
+        signal = macd_line.ewm(span=9).mean()
 
-    if macd_line.iloc[-1] > signal.iloc[-1]:
-        macd = "🟡 黃金交叉"
-    else:
-        macd = "🔴 死亡交叉"
+        if macd_line.iloc[-1] > signal.iloc[-1] and macd_line.iloc[-2] <= signal.iloc[-2]:
+            macd = "🟡 黃金交叉"
+        elif macd_line.iloc[-1] < signal.iloc[-1] and macd_line.iloc[-2] >= signal.iloc[-2]:
+            macd = "🔴 死亡交叉"
+        elif macd_line.iloc[-1] > signal.iloc[-1]:
+            macd = "🟢 多頭"
+        else:
+            macd = "⚪ 弱"
 
-    high = float(df["High"].max())
-    low = float(df["Low"].min())
+        high = float(df["High"].max())
+        low = float(df["Low"].min())
 
-    entry_low = low * 1.01
-    entry_high = low * 1.03
-    stop = low * 0.97
-    target = high * 1.02
-    rr = (target-entry_low)/(entry_low-stop)
+        entry_low = low * 1.01
+        entry_high = low * 1.03
+        stop = low * 0.97
+        target = high * 1.02
 
-    return {
-        "price": round(price,2),
-        "rsi": round(rsi,1),
-        "macd": macd,
-        "entry_low": round(entry_low,2),
-        "entry_high": round(entry_high,2),
-        "stop": round(stop,2),
-        "target": round(target,2),
-        "rr": round(rr,2)
-    }
+        rr = (target-entry_low)/(entry_low-stop)
+
+        return {
+            "price": round(price,2),
+            "rsi": round(rsi,1),
+            "macd": macd,
+            "entry_low": round(entry_low,2),
+            "entry_high": round(entry_high,2),
+            "stop": round(stop,2),
+            "target": round(target,2),
+            "rr": round(rr,2)
+        }
+    except Exception as e:
+        print("calc error:", e)
+        return None
 
 # ======================
-# STOCK UI（統一版）
+# STOCK
 # ======================
 def stock(symbol):
     df5 = get_df(symbol,"5m")
     df1h = get_df(symbol,"60m")
-    if not df5 or not df1h:
+
+    if df5 is None or df1h is None:
         return f"{symbol} 數據錯誤"
 
     d5 = calc(df5)
     d1 = calc(df1h)
 
-    # timing
+    if not d5 or not d1:
+        return f"{symbol} 計算錯誤"
+
     if d5["entry_low"] <= d5["price"] <= d5["entry_high"]:
         timing = "🟢 入場區"
         summary = "👉 可以分批入"
@@ -97,7 +113,7 @@ def stock(symbol):
         timing = "⏳ 等回調"
         summary = "👉 未到位"
 
-    trend = "📈 偏強" if "🟡" in d1["macd"] else "📉 偏弱"
+    trend = "📈 偏強" if "🟢" in d1["macd"] or "🟡" in d1["macd"] else "📉 偏弱"
 
     return f"""
 📊【{symbol} 波段分析】
@@ -130,34 +146,30 @@ MACD：{d5['macd']}
 # MARKET
 # ======================
 def market():
-    strong, wait, weak = [], [], []
+    strong, weak = [], []
 
     for s in SYMBOLS:
         df = get_df(s,"60m")
         if not df:
             continue
         d = calc(df)
+        if not d:
+            continue
 
-        if "🟡" in d["macd"]:
+        if "🟢" in d["macd"] or "🟡" in d["macd"]:
             strong.append(s)
-        elif "🔴" in d["macd"]:
-            weak.append(s)
         else:
-            wait.append(s)
+            weak.append(s)
 
     return f"""
 🌍【市場狀態】
 
 🟢 強勢：{", ".join(strong) or "無"}
-⏳ 等回調：{", ".join(wait) or "無"}
 ❌ 弱勢：{", ".join(weak) or "無"}
 
 ━━━━━━━━━━━━━━
-
-🧠 行動：
 👉 做強勢股
 👉 避弱勢
-👉 等回調
 """
 
 # ======================
@@ -181,35 +193,35 @@ def long_term():
 
 🇺🇸 S&P500（VUAG） → DCA  
 🇺🇸 MSFT → 核心持倉  
-
 🌍 VWRA → 全球分散  
-
-🥇 Gold → 防守
+🥇 Gold → 對沖
 """
 
 # ======================
-# ALERT
+# ALERT LOOP（安全）
 # ======================
 def loop():
     while True:
         try:
             now = time.time()
 
-            # market
             spy = get_df("SPY","60m")
             if spy:
                 d = calc(spy)
-                last = last_alert.get("m",0)
-                if "🔴" in d["macd"] and now-last>1800:
-                    send(CHAT_ID,"🚨 市場轉弱 → 減倉 / Gold")
-                    last_alert["m"]=now
+                if d:
+                    last = last_alert.get("market",0)
+                    if "🔴" in d["macd"] and now-last>1800:
+                        send(CHAT_ID,"🚨 市場轉弱 → 減倉 / Gold")
+                        last_alert["market"]=now
 
-            # stocks
             for s in SYMBOLS:
                 df = get_df(s,"5m")
                 if not df:
                     continue
                 d = calc(df)
+                if not d:
+                    continue
+
                 last = last_alert.get(s,0)
 
                 if d["entry_low"] <= d["price"] <= d["entry_high"] and now-last>600:
@@ -222,9 +234,11 @@ def loop():
 
             time.sleep(300)
 
-        except:
+        except Exception as e:
+            print("loop error:", e)
             time.sleep(300)
 
+# 啟動 thread（唔會阻塞 Flask）
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
@@ -233,6 +247,7 @@ threading.Thread(target=loop, daemon=True).start()
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json()
+
     if not data or "message" not in data:
         return "ok"
 
@@ -264,5 +279,6 @@ def webhook():
 def home():
     return "running"
 
+# ❗ Render 必須用 gunicorn
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
