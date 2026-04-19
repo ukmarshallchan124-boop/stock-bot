@@ -43,7 +43,7 @@ def market_open():
     return 14 <= now.hour <= 21
 
 # ======================
-# FETCH（真 retry）
+# FETCH（含 retry）
 # ======================
 def fetch(symbol):
     key = symbol
@@ -52,7 +52,7 @@ def fetch(symbol):
     if key in cache and now - cache[key]["time"] < CACHE_TTL:
         return cache[key]["data"]
 
-    for attempt in range(3):  # 🔥 真 retry
+    for _ in range(3):
         try:
             if API_KEY:
                 url = "https://api.twelvedata.com/time_series"
@@ -85,7 +85,6 @@ def fetch(symbol):
 
         time.sleep(1)
 
-    # Yahoo fallback
     try:
         df = yf.Ticker(symbol).history(period="5d", interval="15m")
         if not df.empty:
@@ -101,7 +100,6 @@ def fetch(symbol):
 # ======================
 def indicators(df):
     close = df["Close"]
-
     ema9 = close.ewm(span=9).mean()
     ema21 = close.ewm(span=21).mean()
 
@@ -153,7 +151,6 @@ def get_news(symbol):
 def analyze(symbol):
     df = fetch(symbol)
     if df is None or len(df)<50:
-        send(CHAT_ID, f"⚠️【{symbol}】數據暫時不穩定\n👉 系統已自動重試中")
         return None
 
     price = df["Close"].iloc[-1]
@@ -232,7 +229,7 @@ Volume：{"🟢 放量" if volume_ok(df) else "⚪ 正常"}
 """
 
 # ======================
-# LOOP（真 recovery）
+# LOOP
 # ======================
 def loop():
     while True:
@@ -261,38 +258,20 @@ def loop():
 
                 in_zone = d["entry_low"] <= d["price"] <= d["entry_high"]
 
-                # SETUP
                 if not in_zone and now-st["setup"]>SETUP_CD:
-                    send(CHAT_ID,f"""👀【{s} Setup】
-
-📉 回調區：{d['entry_low']}-{d['entry_high']}
-
-👉 未到位
-👉 等回調""")
+                    send(CHAT_ID,f"👀【{s} Setup】\n回調區：{d['entry_low']}-{d['entry_high']}")
                     st["setup"]=now
 
-                # ENTRY
                 if in_zone and not st["in_zone"]:
                     if momentum_ok(df) and volume_ok(df) and now-st["entry"]>ENTRY_CD:
-                        send(CHAT_ID,f"""🚀【{s} 入場信號】
-
-👉 入場：{d['entry_low']}-{d['entry_high']}
-👉 止蝕：{d['stop']}
-👉 目標：{d['target']}
-
-👉 可小注入場""")
+                        send(CHAT_ID,f"🚀【{s} 入場信號】\n入場區：{d['entry_low']}-{d['entry_high']}")
                         st["entry"]=now
 
                 st["in_zone"]=in_zone
 
-                # BREAKOUT
                 if d["price"]>d["target"] and volume_ok(df):
                     if now-st["breakout"]>BREAKOUT_CD:
-                        send(CHAT_ID,f"""🚀【{s} 突破】
-
-📈 {d['target']}
-
-👉 等回調再入""")
+                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}\n👉 等回調再入")
                         st["breakout"]=now
 
                 state[s]=st
@@ -301,98 +280,17 @@ def loop():
 
         except Exception as e:
             print("LOOP ERROR:", e)
-            send(CHAT_ID,"⚠️ 系統短暫波動\n👉 Bot 持續運作中")
             time.sleep(10)
 
 threading.Thread(target=loop,daemon=True).start()
 
 # ======================
-# CALC
+# ROUTES
 # ======================
-def calc_flow(chat_id, text):
-    if user_state.get(chat_id)!="calc":
-        user_state[chat_id]="calc"
-        return send(chat_id,"輸入金額，例如 100")
+@app.route("/",methods=["GET"])
+def home():
+    return "running"
 
-    try:
-        x=float(text)
-        if x<=0:
-            return send(chat_id,"請輸入正數")
-
-        user_state.pop(chat_id)
-
-        send(chat_id,f"""
-📊 計算
-
-+10% → {x*1.1:.2f}
--10% → {x*0.9:.2f}
-
-回撤20% → {x*0.8:.2f}
-回本需要 → +25%
-""")
-
-    except:
-        send(chat_id,"請輸入數字")
-
-# ======================
-# POSITION
-# ======================
-def position_flow(chat_id, text):
-    if user_state.get(chat_id)!="pos":
-        user_state[chat_id]="pos"
-        return send(chat_id,"輸入：NVDA 190")
-
-    try:
-        s,p=text.split()
-        df=fetch(s.upper())
-        if df is None:
-            return send(chat_id,"無數據")
-
-        price=df["Close"].iloc[-1]
-        pnl=(price-float(p))/float(p)*100
-
-        user_state.pop(chat_id)
-
-        send(chat_id,f"""
-📍【{s.upper()} 持倉】
-
-現價：{price:.2f}
-成本：{p}
-
-盈虧：{pnl:.2f}%
-
-👉 {"考慮止賺" if pnl>5 else "觀察"}
-""")
-
-    except:
-        send(chat_id,"格式錯")
-
-# ======================
-# LONG
-# ======================
-def long_term():
-    return """
-💰【長線投資】
-
-📊 S&P500：
-👉 每月DCA
-
-📊 VWRA：
-👉 全球ETF
-
-📊 MSFT：
-👉 等回調5-10%
-
-━━━━━━━━━━━━━━━
-
-👉 50% S&P500
-👉 30% VWRA
-👉 20% MSFT
-"""
-
-# ======================
-# WEBHOOK
-# ======================
 @app.route("/",methods=["POST"])
 def webhook():
     data=request.get_json()
@@ -402,7 +300,7 @@ def webhook():
     text=data["message"].get("text","")
 
     if text=="/start":
-        send(chat_id,"🚀 Bot Ready（V40.5 穩定版）")
+        send(chat_id,"🚀 Bot Ready（V40.5）")
 
     elif text=="/check":
         for s in SWING:
@@ -411,23 +309,11 @@ def webhook():
                 df,d=data
                 send(chat_id,format_output(s,d,df))
 
-    elif text=="/calc":
-        calc_flow(chat_id,text)
-
-    elif text=="/position":
-        position_flow(chat_id,text)
-
-    elif text=="/long":
-        send(chat_id,long_term())
-
-    elif chat_id in user_state:
-        if user_state[chat_id]=="calc":
-            calc_flow(chat_id,text)
-        elif user_state[chat_id]=="pos":
-            position_flow(chat_id,text)
-
     return "ok"
 
-@app.route("/")
-def home():
-    return "running"
+# ======================
+# RUN（🔥最重要）
+# ======================
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
