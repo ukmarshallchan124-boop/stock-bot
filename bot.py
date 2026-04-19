@@ -7,14 +7,21 @@ app = Flask(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+API_KEY = os.getenv("TWELVE_API_KEY")
+
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SWING_STOCKS = ["TSLA","NVDA","AMD"]
 
-signal_state = {}
+cache = {}
+CACHE_TTL = 300
+
+state = {}
+user_state = {}
 
 SETUP_COOLDOWN = 1800
 ENTRY_COOLDOWN = 3600
+BREAKOUT_COOLDOWN = 3600
 
 # ======================
 # SEND
@@ -38,39 +45,56 @@ def menu():
     }
 
 # ======================
-# MARKET
-# ======================
-def market_trend():
-    try:
-        spy = yf.Ticker("SPY").history(period="5d")
-        change = (spy["Close"].iloc[-1] - spy["Close"].iloc[-3]) / spy["Close"].iloc[-3]*100
-        if change > 1:
-            return "📈 市場偏強（Risk ON）", 10
-        elif change < -1:
-            return "📉 市場偏弱（Risk OFF）", -10
-        return "⚪ 市場震盪", 0
-    except:
-        return "⚪ 市場未知", 0
-
-# ======================
-# FETCH
+# FETCH（Twelve + Cache）
 # ======================
 def fetch(symbol, interval):
+    key = f"{symbol}_{interval}"
+    now = time.time()
+
+    if key in cache and now - cache[key]["time"] < CACHE_TTL:
+        return cache[key]["data"], cache[key]["src"]
+
+    try:
+        if API_KEY:
+            url = "https://api.twelvedata.com/time_series"
+            params = {
+                "symbol": symbol,
+                "interval": interval,
+                "outputsize": 100,
+                "apikey": API_KEY
+            }
+
+            r = requests.get(url, params=params, timeout=5).json()
+
+            if "values" in r:
+                df = pd.DataFrame(list(reversed(r["values"])))
+
+                df["close"] = df["close"].astype(float)
+                df["high"] = df["high"].astype(float)
+                df["low"] = df["low"].astype(float)
+                df["volume"] = df["volume"].astype(float)
+
+                df.rename(columns={
+                    "close":"Close",
+                    "high":"High",
+                    "low":"Low",
+                    "volume":"Volume"
+                }, inplace=True)
+
+                cache[key] = {"data": df, "time": now, "src":"twelve"}
+                return df, "twelve"
+    except:
+        pass
+
     try:
         df = yf.Ticker(symbol).history(period="5d", interval=interval)
-        if df.empty:
-            df = yf.Ticker(symbol).history(period="1mo")
-        return df if not df.empty else None
+        if not df.empty:
+            cache[key] = {"data": df, "time": now, "src":"yahoo"}
+            return df, "yahoo"
     except:
-        return None
+        pass
 
-# ======================
-# TRUE SUPPORT / RESISTANCE
-# ======================
-def support_resistance(df):
-    low = df["Low"].rolling(20).min().iloc[-1]
-    high = df["High"].rolling(20).max().iloc[-1]
-    return low, high
+    return None, None
 
 # ======================
 # INDICATORS
@@ -78,280 +102,311 @@ def support_resistance(df):
 def indicators(df):
     close = df["Close"]
 
+    ema9 = close.ewm(span=9).mean()
+    ema21 = close.ewm(span=21).mean()
+    trend = ema9.iloc[-1] > ema21.iloc[-1]
+
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
+    rs = gain.rolling(14).mean()/loss.rolling(14).mean()
+    rsi = round((100-(100/(1+rs))).iloc[-1],1)
 
-    rs = gain.rolling(14).mean() / loss.rolling(14).mean()
-    rsi = round((100 - (100/(1+rs))).iloc[-1],1)
+    return rsi, trend
 
-    ema12 = close.ewm(span=12).mean()
-    ema26 = close.ewm(span=26).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9).mean()
+def volume_ok(df):
+    return df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1]
 
-    macd_val = macd.iloc[-1] - signal.iloc[-1]
+def momentum(df):
+    m = df["Close"].diff().iloc[-3:].mean()
+    if m > 0: return "🟢 加速"
+    if m < 0: return "🔴 轉弱"
+    return "⚪ 中性"
 
-    return rsi, macd_val
+def mtf(df):
+    close = df["Close"]
+
+    t15 = close.ewm(span=9).mean().iloc[-1] > close.ewm(span=21).mean().iloc[-1]
+    t1 = close.iloc[::4].iloc[-1] > close.iloc[::4].ewm(span=20).mean().iloc[-1]
+    t4 = close.iloc[::16].iloc[-1] > close.iloc[::16].ewm(span=50).mean().iloc[-1]
+
+    pullback = close.iloc[-1] < close.rolling(10).max().iloc[-1]
+
+    return t4,t1,t15,pullback
+
+def ai_score(df):
+    score = 50
+    rsi,_ = indicators(df)
+    t4,t1,t15,pb = mtf(df)
+
+    if t4: score+=10
+    if t1: score+=10
+    if t15: score+=5
+    if pb: score+=5
+    if volume_ok(df): score+=10
+
+    if 50<rsi<65: score+=10
+    if rsi>70: score-=10
+
+    return max(0,min(100,score))
 
 # ======================
-# TRUE MTF
+# ENTRY SIGNAL（核心升級）
 # ======================
-def mtf(symbol):
-    df = fetch(symbol,"1h")
-    if df is None:
-        return None
+def entry_signal(df):
+    try:
+        close = df["Close"]
 
-    df_4h = df.resample("4H").last()
+        ema9 = close.ewm(span=9).mean()
+        ema21 = close.ewm(span=21).mean()
 
-    close_4h = df_4h["Close"]
-    close_1h = df["Close"]
+        ema_cross = ema9.iloc[-1] > ema21.iloc[-1]
+        mom = close.diff().iloc[-3:].mean() > 0
 
-    trend_4h = close_4h.iloc[-1] > close_4h.ewm(span=50).mean().iloc[-1]
-    trend_1h = close_1h.iloc[-1] > close_1h.ewm(span=20).mean().iloc[-1]
+        rsi,_ = indicators(df)
+        rsi_ok = 50 < rsi < 70
 
-    pullback = close_1h.iloc[-1] < close_1h.rolling(10).max().iloc[-1]
+        vol = volume_ok(df)
 
-    return trend_4h, trend_1h, pullback
+        score = sum([ema_cross, mom, rsi_ok, vol])
 
-# ======================
-# AI SCORE（加權）
-# ======================
-def ai_score(df, symbol):
-    score = 0
-
-    mtf_data = mtf(symbol)
-    if mtf_data:
-        t4, t1, pb = mtf_data
-        if t4: score += 20
-        if t1: score += 15
-        if pb: score += 10
-
-    rsi, macd = indicators(df)
-
-    if 50 < rsi < 65: score += 15
-    elif rsi > 70: score -= 15
-
-    if macd > 0: score += 15
-    else: score -= 5
-
-    _, mscore = market_trend()
-    score += mscore
-
-    return max(0, min(100, score))
+        if score >= 3:
+            return "🟢 入場信號成立（Trend + Momentum）"
+        elif score == 2:
+            return "🟡 部分確認（等多一支K）"
+        else:
+            return "❌ 未確認"
+    except:
+        return "⚪ 無數據"
 
 # ======================
 # DATA
 # ======================
+def sr(df):
+    return df["Low"].rolling(20).min().iloc[-1], df["High"].rolling(20).max().iloc[-1]
+
 def get_data(symbol):
-    df = fetch(symbol,"15m")
-    if df is None:
+    df,src = fetch(symbol,"15min")
+    if df is None or len(df)<50:
         return None
 
     price = df["Close"].iloc[-1]
+    low,high = sr(df)
 
-    support, resistance = support_resistance(df)
-
-    entry_low = support
-    entry_high = support * 1.02
-    stop = support * 0.97
-    target = resistance
+    entry_low = low
+    entry_high = low*1.02
+    stop = low*0.97
+    target = high
 
     rr = round((target-entry_low)/(entry_low-stop),2)
 
-    return df, {
-        "price": round(price,2),
-        "entry_low": round(entry_low,2),
-        "entry_high": round(entry_high,2),
-        "stop": round(stop,2),
-        "target": round(target,2),
-        "rr": rr
+    return df,{
+        "price":round(price,2),
+        "entry_low":round(entry_low,2),
+        "entry_high":round(entry_high,2),
+        "stop":round(stop,2),
+        "target":round(target,2),
+        "rr":rr
     }
 
 # ======================
-# TIMING
-# ======================
-def timing(df):
-    ema9 = df["Close"].ewm(span=9).mean()
-    ema21 = df["Close"].ewm(span=21).mean()
-    return ema9.iloc[-1] > ema21.iloc[-1]
-
-# ======================
-# NEWS（改善版）
+# NEWS
 # ======================
 def get_news(symbol):
     try:
-        news = yf.Ticker(symbol).news[:5]
-
-        txt = ""
-        score = 0
+        news = yf.Ticker(symbol).news[:3]
+        txt=""
+        score=0
 
         for n in news:
-            title = n.get("title","")
-            txt += f"• {title}\n"
+            title=n.get("title","")
+            lower=title.lower()
 
-            if any(w in title.lower() for w in ["earnings","beat","ai","growth"]):
-                txt += "🟢 利好\n\n"
-                score += 1
-            elif any(w in title.lower() for w in ["cut","risk","drop","downgrade"]):
-                txt += "🔴 利淡\n\n"
-                score -= 1
+            if any(w in lower for w in ["ai","growth","beat","strong"]):
+                txt+=f"• {title}\n🟢 利好 → 支持上升\n\n"; score+=1
+            elif any(w in lower for w in ["drop","risk","cut"]):
+                txt+=f"• {title}\n🔴 利淡 → 增加回調風險\n\n"; score-=1
             else:
-                txt += "⚪ 中性\n\n"
+                txt+=f"• {title}\n⚪ 中性\n\n"
 
-        summary = "🟢 偏利好" if score>1 else "🔴 偏利淡" if score<-1 else "⚪ 中性"
+        summary="🟢 偏強" if score>0 else "🔴 偏弱" if score<0 else "⚪ 中性"
+        return txt,summary
 
-        return txt, summary
     except:
-        return "⚪ 無新聞", "⚪ 中性"
+        return "⚪ 無新聞","⚪ 中性"
 
 # ======================
-# POSITION SIZE
+# FORMAT
 # ======================
-def position_size(entry, stop, capital=1000, risk_pct=1):
-    risk = capital * (risk_pct/100)
-    per_share = abs(entry-stop)
-    return round(risk/per_share,2) if per_share else 0
+def format_output(symbol,d,df):
+    rsi,_ = indicators(df)
+    score = ai_score(df)
+    t4,t1,t15,pb = mtf(df)
 
-# ======================
-# FORMAT（最終UI）
-# ======================
-def format_output(symbol, d, df):
-    score = ai_score(df, symbol)
-    success = int(score * 0.85)
-
-    rsi, macd_val = indicators(df)
-    macd = "🟢 動能向上" if macd_val > 0 else "🔴 偏弱"
-
-    mtf_data = mtf(symbol)
-    if not mtf_data:
-        return f"{symbol} 無數據"
-
-    t4, t1, pb = mtf_data
-
-    trend = "📈 偏強" if t4 else "📉 偏弱"
-    timing_text = "🟡 等回調" if pb else "🟢 可留意"
-
-    news_txt, news_summary = get_news(symbol)
-    market, _ = market_trend()
-
-    size = position_size(d["entry_low"], d["stop"])
+    signal = entry_signal(df)
+    news_txt,news_summary = get_news(symbol)
 
     return f"""
-📊【{symbol} 波段分析｜PRO】
+📊【{symbol} 波段分析】
 
 💰 價格：{d['price']}
-🎯 AI信心：{score}/100
-🏆 勝率估算：{success}%
-⏱️ Timing：{timing_text}
-
-{trend}
+🧠 AI信心：{score}
+⏱️ 入場信號：{signal}
 
 ━━━━━━━━━━━━━━━
 
-📊 結構分析：
-4H：{"🟢 上升" if t4 else "🔴 轉弱"}
+📊 結構：
+4H：{"🟢 上升" if t4 else "🔴 弱"}
 1H：{"🟡 回調" if pb else "🟢 延續"}
-15m：{"🟢 轉強" if timing(df) else "⚪ 未確認"}
+15m：{"🟢 轉強" if t15 else "⚪ 未確認"}
 
 RSI：{rsi}
-MACD：{macd}
-
-━━━━━━━━━━━━━━━
-
-📉 支撐：{d['entry_low']}
-📈 阻力：{d['target']}
+Momentum：{momentum(df)}
 
 ━━━━━━━━━━━━━━━
 
 💰 策略🔥
-
 👉 入場：{d['entry_low']} - {d['entry_high']}
 👉 止蝕：{d['stop']}
 👉 目標：{d['target']}
-
 📊 R/R：{d['rr']}
-💸 倉位：約 {size} 股（1%風險）
 
 ━━━━━━━━━━━━━━━
 
-🌍 {market}
-
-━━━━━━━━━━━━━━━
-
-🧠 總結：
-
-👉 {"❌ 唔好追" if not pb else "🟡 等回調"}
-👉 ✔ 入區先考慮
-
-━━━━━━━━━━━━━━━
-
-📰【新聞】
+📰 新聞
 
 {news_txt}
 🧠 {news_summary}
 """
 
 # ======================
-# LOOP（ANTI SPAM）
+# LOOP（推送）
 # ======================
 def loop():
     while True:
         try:
-            now = time.time()
+            now=time.time()
 
             for s in SWING_STOCKS:
-                data = get_data(s)
-                if not data:
-                    continue
+                data=get_data(s)
+                if not data: continue
 
-                df, d = data
-                score = ai_score(df, s)
+                df,d=data
+                score=ai_score(df)
 
-                state = signal_state.get(s, {"entry":0,"setup":0,"price":None})
+                st=state.get(s,{"setup":0,"entry":0,"breakout":0,"zone":None})
+                zone=f"{d['entry_low']}-{d['entry_high']}"
 
-                price = d["price"]
-                price_changed = state["price"] is None or abs(price - state["price"]) / price > 0.01
+                if score>60 and d["rr"]>2:
+                    if now-st["setup"]>SETUP_COOLDOWN and zone!=st["zone"]:
+                        send(CHAT_ID,f"👀【{s} Setup】\n回調區：{zone}")
+                        st["setup"]=now
+                        st["zone"]=zone
 
-                in_zone = d["entry_low"] <= price <= d["entry_high"]
-                momentum = df["Close"].diff().iloc[-3:].mean()
+                if d["entry_low"]<=d["price"]<=d["entry_high"] and score>70:
+                    sig = entry_signal(df)
 
-                if score >= 75 and in_zone and timing(df) and momentum > 0:
-                    if now - state["entry"] > ENTRY_COOLDOWN and price_changed:
-                        send(CHAT_ID, f"🚀【{s} Entry】\n{d['entry_low']} - {d['entry_high']}")
-                        state["entry"] = now
-                        state["price"] = price
+                    if "🟢" in sig:
+                        if now-st["entry"]>ENTRY_COOLDOWN:
+                            send(CHAT_ID,f"🚀【{s} Entry】\n{sig}\n區間：{zone}")
+                            st["entry"]=now
 
-                signal_state[s] = state
+                if d["price"]>d["target"] and score>75:
+                    if now-st["breakout"]>BREAKOUT_COOLDOWN:
+                        send(CHAT_ID,f"🚀【{s} Breakout】突破 {d['target']}")
+                        st["breakout"]=now
+
+                state[s]=st
 
             time.sleep(300)
 
         except Exception as e:
-            print("LOOP ERROR:", e)
+            print("LOOP ERROR:",e)
 
-threading.Thread(target=loop, daemon=True).start()
+threading.Thread(target=loop,daemon=True).start()
+
+# ======================
+# TOOLS
+# ======================
+def calc_flow(chat_id, text):
+    try:
+        x=float(text)
+        send(chat_id,f"+10%→{round(x*1.1,2)}\n-10%→{round(x*0.9,2)}")
+        user_state.pop(chat_id,None)
+    except:
+        send(chat_id,"請輸入數字，例如：100")
+
+def position_flow(chat_id, text):
+    try:
+        s,p=text.split()
+        df,_=fetch(s.upper(),"15min")
+        price=df["Close"].iloc[-1]
+        pnl=(price-float(p))/float(p)*100
+        send(chat_id,f"{s.upper()} 盈虧：{round(pnl,2)}%")
+        user_state.pop(chat_id,None)
+    except:
+        send(chat_id,"格式錯誤，例如：NVDA 190")
+
+# ======================
+# LONG TERM
+# ======================
+def long_term():
+    spy = yf.Ticker("SPY").history(period="1d")
+    msft = yf.Ticker("MSFT").history(period="1d")
+
+    spy_p = round(spy["Close"].iloc[-1],2)
+    msft_p = round(msft["Close"].iloc[-1],2)
+
+    return f"""
+💰【長線投資】
+
+📊 S&P500 現價：{spy_p}
+👉 每月DCA
+
+📊 MSFT 現價：{msft_p}
+👉 等回調先買
+
+🧠 S&P = 地基
+MSFT = 增長
+"""
 
 # ======================
 # WEBHOOK
 # ======================
-@app.route("/", methods=["POST"])
+@app.route("/",methods=["POST"])
 def webhook():
-    data = request.get_json()
-    if not data or "message" not in data:
-        return "ok"
+    data=request.get_json()
+    if not data: return "ok"
 
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text","")
+    chat_id=data["message"]["chat"]["id"]
+    text=data["message"].get("text","")
 
     if text in ["/start","start"]:
-        send(chat_id,"🚀 V36 PRO（Trading Grade）",menu())
+        send(chat_id,"🚀 V39.6 PRO",menu())
 
-    elif "波段分析" in text:
+    elif text=="📊 波段分析":
         for s in SWING_STOCKS:
-            data = get_data(s)
+            data=get_data(s)
             if data:
-                df, d = data
-                send(chat_id, format_output(s,d,df), menu())
+                df,d=data
+                send(chat_id,format_output(s,d,df))
+
+    elif text=="🧮 計算工具":
+        user_state[chat_id]="calc"
+        send(chat_id,"請輸入金額，例如：100")
+
+    elif text=="📍 持倉分析":
+        user_state[chat_id]="pos"
+        send(chat_id,"輸入：股票 成本\n例如 NVDA 190")
+
+    elif text=="💰 長線投資":
+        send(chat_id,long_term())
+
+    elif chat_id in user_state:
+        if user_state[chat_id]=="calc":
+            calc_flow(chat_id,text)
+        elif user_state[chat_id]=="pos":
+            position_flow(chat_id,text)
 
     return "ok"
 
@@ -359,5 +414,5 @@ def webhook():
 def home():
     return "running"
 
-if __name__ == "__main__":
+if __name__=="__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
