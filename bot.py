@@ -1,114 +1,64 @@
 from flask import Flask, request
-import requests, os, time, threading
+import requests, os, time, threading, datetime
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
-import pytz
 
 app = Flask(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # group id（自動推送用）
-API_KEY = os.getenv("TWELVE_API_KEY")
-
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
-SWING_STOCKS = ["TSLA","NVDA","AMD"]
+SWING = ["TSLA","NVDA","AMD"]
 
-# ======================
-# CACHE
-# ======================
 cache = {}
 CACHE_TTL = 300
 
-# ======================
-# STATE（防spam核心）
-# ======================
 state = {}
+user_state = {}
+last_use = {}
 
-SETUP_COOLDOWN = 1800
-ENTRY_COOLDOWN = 3600
-BREAKOUT_COOLDOWN = 3600
-
-# ======================
-# MARKET HOURS
-# ======================
-def market_open():
-    now = datetime.now(pytz.timezone("US/Eastern"))
-    return now.weekday() < 5 and (9 <= now.hour < 16)
+SETUP_CD = 1800
+ENTRY_CD = 3600
+BREAKOUT_CD = 3600
 
 # ======================
 # SEND
 # ======================
-def send(chat_id, text, keyboard=None):
+def send(chat_id, text):
     try:
-        data = {"chat_id": chat_id, "text": text[:4000]}
-        if keyboard:
-            data["reply_markup"] = keyboard
-        requests.post(f"{URL}/sendMessage", json=data, timeout=10)
-    except Exception as e:
-        print("SEND ERROR:", e)
-
-def menu():
-    return {
-        "keyboard":[
-            ["📊 波段分析","💰 長線投資"],
-            ["🧮 計算工具","📍 持倉分析"]
-        ],
-        "resize_keyboard":True
-    }
+        requests.post(f"{URL}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": text[:4000]
+        }, timeout=10)
+    except:
+        pass
 
 # ======================
-# FETCH（Twelve + Yahoo）
+# MARKET TIME
 # ======================
-def fetch(symbol, interval):
-    key = f"{symbol}_{interval}"
+def market_open():
+    now = datetime.datetime.utcnow()
+    return 14 <= now.hour <= 21  # US market
+
+# ======================
+# FETCH
+# ======================
+def fetch(symbol):
+    key = symbol
     now = time.time()
 
     if key in cache and now - cache[key]["time"] < CACHE_TTL:
-        return cache[key]["data"], cache[key]["src"]
+        return cache[key]["data"]
 
-    # TwelveData
     try:
-        if API_KEY:
-            url = "https://api.twelvedata.com/time_series"
-            params = {
-                "symbol": symbol,
-                "interval": interval,
-                "outputsize": 100,
-                "apikey": API_KEY
-            }
-            r = requests.get(url, params=params, timeout=5).json()
-
-            if "values" in r:
-                df = pd.DataFrame(list(reversed(r["values"])))
-                df["close"] = df["close"].astype(float)
-                df["high"] = df["high"].astype(float)
-                df["low"] = df["low"].astype(float)
-                df["volume"] = df["volume"].astype(float)
-
-                df.rename(columns={
-                    "close":"Close",
-                    "high":"High",
-                    "low":"Low",
-                    "volume":"Volume"
-                }, inplace=True)
-
-                cache[key] = {"data": df, "time": now, "src":"twelve"}
-                return df, "twelve"
-    except:
-        pass
-
-    # Yahoo fallback
-    try:
-        df = yf.Ticker(symbol).history(period="5d", interval=interval)
+        df = yf.Ticker(symbol).history(period="5d", interval="15m")
         if not df.empty:
-            cache[key] = {"data": df, "time": now, "src":"yahoo"}
-            return df, "yahoo"
+            cache[key] = {"data": df, "time": now}
+            return df
     except:
         pass
 
-    return None, None
+    return None
 
 # ======================
 # INDICATORS
@@ -133,45 +83,33 @@ def volume_ok(df):
 
 def momentum(df):
     m = df["Close"].diff().iloc[-3:].mean()
-    if m > 0: return "🟢 加速"
-    if m < 0: return "🔴 轉弱"
-    return "⚪ 中性"
-
-def mtf(df):
-    close = df["Close"]
-
-    t15 = close.ewm(span=9).mean().iloc[-1] > close.ewm(span=21).mean().iloc[-1]
-    t1 = close.iloc[::4].iloc[-1] > close.iloc[::4].ewm(span=20).mean().iloc[-1]
-    t4 = close.iloc[::16].iloc[-1] > close.iloc[::16].ewm(span=50).mean().iloc[-1]
-
-    pullback = close.iloc[-1] < close.rolling(10).max().iloc[-1]
-
-    return t4,t1,t15,pullback
-
-def ai_score(df):
-    score = 50
-    rsi,trend = indicators(df)
-    t4,t1,t15,pb = mtf(df)
-
-    if t4: score+=10
-    if t1: score+=10
-    if t15: score+=5
-    if pb: score+=5
-    if volume_ok(df): score+=10
-
-    if 50<rsi<65: score+=10
-    if rsi>70: score-=10
-
-    return max(0,min(100,score))
+    return m > 0
 
 # ======================
-# DATA
+# SR
 # ======================
 def sr(df):
     return df["Low"].rolling(20).min().iloc[-1], df["High"].rolling(20).max().iloc[-1]
 
-def get_data(symbol):
-    df,src = fetch(symbol,"15min")
+# ======================
+# NEWS
+# ======================
+def get_news(symbol):
+    try:
+        news = yf.Ticker(symbol).news[:2]
+        txt=""
+        for n in news:
+            title=n.get("title","")
+            txt+=f"• {title}\n"
+        return txt if txt else "⚪ 無重要新聞"
+    except:
+        return "⚪ 無新聞"
+
+# ======================
+# ANALYSIS
+# ======================
+def analyze(symbol):
+    df = fetch(symbol)
     if df is None or len(df)<50:
         return None
 
@@ -185,6 +123,8 @@ def get_data(symbol):
 
     rr = round((target-entry_low)/(entry_low-stop),2)
 
+    rsi,trend = indicators(df)
+
     return df,{
         "price":round(price,2),
         "entry_low":round(entry_low,2),
@@ -192,41 +132,41 @@ def get_data(symbol):
         "stop":round(stop,2),
         "target":round(target,2),
         "rr":rr,
-        "src":src
+        "rsi":rsi,
+        "trend":trend
     }
 
 # ======================
-# FORMAT（波段分析）
+# FORMAT
 # ======================
 def format_output(symbol,d,df):
-    rsi,_ = indicators(df)
-    score = ai_score(df)
-    t4,t1,t15,pb = mtf(df)
+    news = get_news(symbol)
 
     return f"""
 📊【{symbol} 波段分析】
 
 💰 價格：{d['price']}
-🧠 AI信心：{score}
+📈 趨勢：{"🟢 上升" if d['trend'] else "🔴 偏弱"}
+
+RSI：{d['rsi']}
+Volume：{"🟢 放量" if volume_ok(df) else "⚪ 正常"}
 
 ━━━━━━━━━━━━━━━
-4H：{"🟢 上升" if t4 else "🔴 弱"}
-1H：{"🟡 回調" if pb else "🟢 延續"}
-15m：{"🟢 轉強" if t15 else "⚪ 未確認"}
 
-RSI：{rsi}
-Momentum：{momentum(df)}
-
-━━━━━━━━━━━━━━━
 👉 入場：{d['entry_low']} - {d['entry_high']}
 🛑 止蝕：{d['stop']}
 🎯 目標：{d['target']}
 
 📊 R/R：{d['rr']}
+
+━━━━━━━━━━━━━━━
+
+📰 新聞：
+{news}
 """
 
 # ======================
-# LOOP（Signal Engine FIX）
+# LOOP
 # ======================
 def loop():
     while True:
@@ -235,106 +175,130 @@ def loop():
                 time.sleep(300)
                 continue
 
-            now = time.time()
+            now=time.time()
 
-            for s in SWING_STOCKS:
-                data = get_data(s)
+            for s in SWING:
+                data = analyze(s)
                 if not data: continue
 
                 df,d = data
-                score = ai_score(df)
+                if d["rr"] < 1.5: continue
 
-                st = state.get(s,{
-                    "setup":0,
-                    "entry":0,
-                    "breakout":0,
-                    "zone":None,
-                    "in_zone":False
-                })
+                st = state.get(s,{"setup":0,"entry":0,"breakout":0})
 
-                zone = f"{d['entry_low']}-{d['entry_high']}"
-                price = d["price"]
+                # SETUP
+                if d["trend"] and now-st["setup"]>SETUP_CD:
+                    send(os.getenv("CHAT_ID"),
+                         f"👀 {s} Setup\n區間：{d['entry_low']}-{d['entry_high']}")
+                    st["setup"]=now
 
-                # ===== Setup =====
-                if score>60 and d["rr"]>2:
-                    if now-st["setup"]>SETUP_COOLDOWN and zone!=st["zone"]:
-                        send(CHAT_ID,f"👀【{s} Setup】\n回調區：{zone}")
-                        st["setup"]=now
-                        st["zone"]=zone
-
-                # ===== Entry =====
-                in_zone = d["entry_low"]<=price<=d["entry_high"]
-
-                if in_zone and not st["in_zone"] and score>70:
-                    if now-st["entry"]>ENTRY_COOLDOWN:
-                        send(CHAT_ID,f"🚀【{s} Entry】\n區間：{zone}")
+                # ENTRY
+                if d["entry_low"]<=d["price"]<=d["entry_high"] and momentum(df):
+                    if now-st["entry"]>ENTRY_CD:
+                        send(os.getenv("CHAT_ID"),
+                             f"🚀 {s} 入場信號\n區間：{d['entry_low']}-{d['entry_high']}")
                         st["entry"]=now
 
-                st["in_zone"]=in_zone
-
-                # ===== Breakout =====
-                if price>d["target"] and score>75:
-                    if now-st["breakout"]>BREAKOUT_COOLDOWN:
-                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}")
+                # BREAKOUT
+                if d["price"]>d["target"] and volume_ok(df):
+                    if now-st["breakout"]>BREAKOUT_CD:
+                        send(os.getenv("CHAT_ID"),
+                             f"🚀 {s} 突破 {d['target']}")
                         st["breakout"]=now
 
                 state[s]=st
 
             time.sleep(300)
-
-        except Exception as e:
-            print("LOOP ERROR:",e)
+        except:
+            pass
 
 threading.Thread(target=loop,daemon=True).start()
 
 # ======================
-# TOOLS
+# CALC
 # ======================
-def calc(x):
-    x=float(x)
-    return f"+10%→{round(x*1.1,2)}\n-10%→{round(x*0.9,2)}"
+def calc_flow(chat_id, text):
+    if user_state.get(chat_id)!="calc":
+        user_state[chat_id]="calc"
+        return send(chat_id,"輸入金額，例如100")
 
-def position(symbol,entry):
-    df,_=fetch(symbol,"15min")
-    if df is None: return "無數據"
-    price=df["Close"].iloc[-1]
-    pnl=(price-entry)/entry*100
-    return f"{symbol} 盈虧：{round(pnl,2)}%"
+    try:
+        x=float(text)
+        if x<=0: return send(chat_id,"金額需>0")
+        user_state.pop(chat_id)
+        send(chat_id,f"+10% {x*1.1:.2f}\n-10% {x*0.9:.2f}")
+    except:
+        send(chat_id,"請輸入數字")
 
+# ======================
+# POSITION
+# ======================
+def position_flow(chat_id, text):
+    if user_state.get(chat_id)!="pos":
+        user_state[chat_id]="pos"
+        return send(chat_id,"輸入：NVDA 190")
+
+    try:
+        s,p=text.split()
+        df=fetch(s.upper())
+        price=df["Close"].iloc[-1]
+        pnl=(price-float(p))/float(p)*100
+        user_state.pop(chat_id)
+        send(chat_id,f"{s} 盈虧 {pnl:.2f}%")
+    except:
+        send(chat_id,"格式錯")
+
+# ======================
+# LONG
+# ======================
 def long_term():
-    return "S&P500：每月DCA\nMSFT：等回調"
+    return """
+💰【長線】
+
+S&P500：
+👉 每月DCA
+👉 分散風險
+
+MSFT：
+👉 AI龍頭
+👉 等回調再買
+"""
 
 # ======================
-# WEBHOOK（完整修復）
+# WEBHOOK
 # ======================
 @app.route("/",methods=["POST"])
 def webhook():
     data=request.get_json()
-    if not data or "message" not in data:
-        return "ok"
+    if not data: return "ok"
 
     chat_id=data["message"]["chat"]["id"]
     text=data["message"].get("text","")
 
-    if text in ["/start","start"]:
-        send(chat_id,"🚀 V39.7.1 完整版",menu())
+    if text=="/start":
+        send(chat_id,"🚀 Bot 已啟動")
 
-    elif "波段分析" in text:
-        for s in SWING_STOCKS:
-            data=get_data(s)
+    elif text=="/check":
+        for s in SWING:
+            data=analyze(s)
             if data:
                 df,d=data
-                send(chat_id,format_output(s,d,df),menu())
+                send(chat_id,format_output(s,d,df))
 
-    elif "長線" in text:
-        send(chat_id,long_term(),menu())
+    elif text=="/calc":
+        calc_flow(chat_id,text)
 
-    elif text.replace('.','',1).isdigit():
-        send(chat_id,calc(text),menu())
+    elif text=="/position":
+        position_flow(chat_id,text)
 
-    elif len(text.split())==2:
-        s,p=text.split()
-        send(chat_id,position(s.upper(),float(p)),menu())
+    elif text=="/long":
+        send(chat_id,long_term())
+
+    elif chat_id in user_state:
+        if user_state[chat_id]=="calc":
+            calc_flow(chat_id,text)
+        elif user_state[chat_id]=="pos":
+            position_flow(chat_id,text)
 
     return "ok"
 
