@@ -8,7 +8,7 @@ import pytz
 app = Flask(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("CHAT_ID")  # group id（自動推送用）
 API_KEY = os.getenv("TWELVE_API_KEY")
 
 URL = f"https://api.telegram.org/bot{TOKEN}"
@@ -31,11 +31,11 @@ ENTRY_COOLDOWN = 3600
 BREAKOUT_COOLDOWN = 3600
 
 # ======================
-# MARKET HOURS（關鍵修復）
+# MARKET HOURS
 # ======================
 def market_open():
     now = datetime.now(pytz.timezone("US/Eastern"))
-    return now.weekday() < 5 and 9 <= now.hour < 16
+    return now.weekday() < 5 and (9 <= now.hour < 16)
 
 # ======================
 # SEND
@@ -46,8 +46,8 @@ def send(chat_id, text, keyboard=None):
         if keyboard:
             data["reply_markup"] = keyboard
         requests.post(f"{URL}/sendMessage", json=data, timeout=10)
-    except:
-        pass
+    except Exception as e:
+        print("SEND ERROR:", e)
 
 def menu():
     return {
@@ -59,7 +59,7 @@ def menu():
     }
 
 # ======================
-# FETCH（Twelve + Cache）
+# FETCH（Twelve + Yahoo）
 # ======================
 def fetch(symbol, interval):
     key = f"{symbol}_{interval}"
@@ -68,6 +68,7 @@ def fetch(symbol, interval):
     if key in cache and now - cache[key]["time"] < CACHE_TTL:
         return cache[key]["data"], cache[key]["src"]
 
+    # TwelveData
     try:
         if API_KEY:
             url = "https://api.twelvedata.com/time_series"
@@ -98,6 +99,7 @@ def fetch(symbol, interval):
     except:
         pass
 
+    # Yahoo fallback
     try:
         df = yf.Ticker(symbol).history(period="5d", interval=interval)
         if not df.empty:
@@ -137,10 +139,13 @@ def momentum(df):
 
 def mtf(df):
     close = df["Close"]
+
     t15 = close.ewm(span=9).mean().iloc[-1] > close.ewm(span=21).mean().iloc[-1]
     t1 = close.iloc[::4].iloc[-1] > close.iloc[::4].ewm(span=20).mean().iloc[-1]
     t4 = close.iloc[::16].iloc[-1] > close.iloc[::16].ewm(span=50).mean().iloc[-1]
+
     pullback = close.iloc[-1] < close.rolling(10).max().iloc[-1]
+
     return t4,t1,t15,pullback
 
 def ai_score(df):
@@ -191,7 +196,37 @@ def get_data(symbol):
     }
 
 # ======================
-# LOOP（修復版核心）
+# FORMAT（波段分析）
+# ======================
+def format_output(symbol,d,df):
+    rsi,_ = indicators(df)
+    score = ai_score(df)
+    t4,t1,t15,pb = mtf(df)
+
+    return f"""
+📊【{symbol} 波段分析】
+
+💰 價格：{d['price']}
+🧠 AI信心：{score}
+
+━━━━━━━━━━━━━━━
+4H：{"🟢 上升" if t4 else "🔴 弱"}
+1H：{"🟡 回調" if pb else "🟢 延續"}
+15m：{"🟢 轉強" if t15 else "⚪ 未確認"}
+
+RSI：{rsi}
+Momentum：{momentum(df)}
+
+━━━━━━━━━━━━━━━
+👉 入場：{d['entry_low']} - {d['entry_high']}
+🛑 止蝕：{d['stop']}
+🎯 目標：{d['target']}
+
+📊 R/R：{d['rr']}
+"""
+
+# ======================
+# LOOP（Signal Engine FIX）
 # ======================
 def loop():
     while True:
@@ -200,26 +235,25 @@ def loop():
                 time.sleep(300)
                 continue
 
-            now=time.time()
+            now = time.time()
 
             for s in SWING_STOCKS:
-                data=get_data(s)
+                data = get_data(s)
                 if not data: continue
 
-                df,d=data
-                score=ai_score(df)
+                df,d = data
+                score = ai_score(df)
 
                 st = state.get(s,{
                     "setup":0,
                     "entry":0,
                     "breakout":0,
                     "zone":None,
-                    "last_price":None,
                     "in_zone":False
                 })
 
-                zone=f"{d['entry_low']}-{d['entry_high']}"
-                price=d["price"]
+                zone = f"{d['entry_low']}-{d['entry_high']}"
+                price = d["price"]
 
                 # ===== Setup =====
                 if score>60 and d["rr"]>2:
@@ -228,37 +262,20 @@ def loop():
                         st["setup"]=now
                         st["zone"]=zone
 
-                # ===== Entry（修復）=====
+                # ===== Entry =====
                 in_zone = d["entry_low"]<=price<=d["entry_high"]
-
-                price_changed = (
-                    st["last_price"] is None or
-                    abs(price - st["last_price"]) / price > 0.01
-                )
 
                 if in_zone and not st["in_zone"] and score>70:
                     if now-st["entry"]>ENTRY_COOLDOWN:
-                        send(CHAT_ID,
-f"""🚀【{s} Entry】
-
-入場區：{zone}
-止蝕：{d['stop']}
-目標：{d['target']}
-""")
+                        send(CHAT_ID,f"🚀【{s} Entry】\n區間：{zone}")
                         st["entry"]=now
-                        st["last_price"]=price
 
-                st["in_zone"] = in_zone
+                st["in_zone"]=in_zone
 
                 # ===== Breakout =====
                 if price>d["target"] and score>75:
                     if now-st["breakout"]>BREAKOUT_COOLDOWN:
-                        send(CHAT_ID,
-f"""🚀【{s} 突破】
-
-突破：{d['target']}
-⚠️ 等回調先入
-""")
+                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}")
                         st["breakout"]=now
 
                 state[s]=st
@@ -271,7 +288,24 @@ f"""🚀【{s} 突破】
 threading.Thread(target=loop,daemon=True).start()
 
 # ======================
-# WEBHOOK
+# TOOLS
+# ======================
+def calc(x):
+    x=float(x)
+    return f"+10%→{round(x*1.1,2)}\n-10%→{round(x*0.9,2)}"
+
+def position(symbol,entry):
+    df,_=fetch(symbol,"15min")
+    if df is None: return "無數據"
+    price=df["Close"].iloc[-1]
+    pnl=(price-entry)/entry*100
+    return f"{symbol} 盈虧：{round(pnl,2)}%"
+
+def long_term():
+    return "S&P500：每月DCA\nMSFT：等回調"
+
+# ======================
+# WEBHOOK（完整修復）
 # ======================
 @app.route("/",methods=["POST"])
 def webhook():
@@ -283,7 +317,24 @@ def webhook():
     text=data["message"].get("text","")
 
     if text in ["/start","start"]:
-        send(chat_id,"🚀 V39.7（Signal Fix）",menu())
+        send(chat_id,"🚀 V39.7.1 完整版",menu())
+
+    elif "波段分析" in text:
+        for s in SWING_STOCKS:
+            data=get_data(s)
+            if data:
+                df,d=data
+                send(chat_id,format_output(s,d,df),menu())
+
+    elif "長線" in text:
+        send(chat_id,long_term(),menu())
+
+    elif text.replace('.','',1).isdigit():
+        send(chat_id,calc(text),menu())
+
+    elif len(text.split())==2:
+        s,p=text.split()
+        send(chat_id,position(s.upper(),float(p)),menu())
 
     return "ok"
 
