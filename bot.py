@@ -12,6 +12,31 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 last_alert = {}
 
 # ======================
+# CACHE（防爆 API）
+# ======================
+cache = {}
+CACHE_TTL = 300  # 5分鐘
+
+def get_df(symbol, interval):
+    key = f"{symbol}_{interval}"
+    now = time.time()
+
+    if key in cache:
+        data, ts = cache[key]
+        if now - ts < CACHE_TTL:
+            return data
+
+    try:
+        df = yf.Ticker(symbol).history(period="5d", interval=interval)
+        if df is None or df.empty:
+            return None
+
+        cache[key] = (df, now)
+        return df
+    except:
+        return None
+
+# ======================
 # SEND
 # ======================
 def send(chat_id, msg):
@@ -20,21 +45,8 @@ def send(chat_id, msg):
             "chat_id": chat_id,
             "text": msg[:4000]
         }, timeout=10)
-    except Exception as e:
-        print("send error:", e)
-
-# ======================
-# DATA
-# ======================
-def get_df(symbol, interval):
-    try:
-        df = yf.Ticker(symbol).history(period="5d", interval=interval)
-        if df is None or df.empty:
-            return None
-        return df
-    except Exception as e:
-        print("data error:", e)
-        return None
+    except:
+        pass
 
 # ======================
 # CALC
@@ -83,39 +95,39 @@ def calc(df):
             "target": round(target,2),
             "rr": rr
         }
-    except Exception as e:
-        print("calc error:", e)
+    except:
         return None
 
 # ======================
 # STOCK
 # ======================
 def stock(symbol):
-    df5 = get_df(symbol,"5m")
-    df1h = get_df(symbol,"60m")
+    try:
+        df5 = get_df(symbol,"5m")
+        df1h = get_df(symbol,"60m")
 
-    if df5 is None or df1h is None:
-        return f"{symbol} 數據錯誤"
+        if df5 is None or df1h is None:
+            return f"{symbol} 數據錯誤"
 
-    d5 = calc(df5)
-    d1 = calc(df1h)
+        d5 = calc(df5)
+        d1 = calc(df1h)
 
-    if not d5 or not d1:
-        return f"{symbol} 計算錯誤"
+        if not d5 or not d1:
+            return f"{symbol} 計算錯誤"
 
-    if d5["entry_low"] <= d5["price"] <= d5["entry_high"]:
-        timing = "🟢 入場區"
-        summary = "👉 可以分批入"
-    elif d5["price"] > d5["entry_high"]:
-        timing = "❌ 唔好追"
-        summary = "👉 現價太高"
-    else:
-        timing = "⏳ 等回調"
-        summary = "👉 未到位"
+        if d5["entry_low"] <= d5["price"] <= d5["entry_high"]:
+            timing = "🟢 入場區"
+            summary = "👉 可以分批入"
+        elif d5["price"] > d5["entry_high"]:
+            timing = "❌ 唔好追"
+            summary = "👉 現價太高"
+        else:
+            timing = "⏳ 等回調"
+            summary = "👉 未到位"
 
-    trend = "📈 偏強" if "🟢" in d1["macd"] or "🟡" in d1["macd"] else "📉 偏弱"
+        trend = "📈 偏強" if "🟢" in d1["macd"] or "🟡" in d1["macd"] else "📉 偏弱"
 
-    return f"""
+        return f"""
 📊【{symbol} 波段分析】
 
 💰 價格：{d5['price']}
@@ -141,6 +153,8 @@ MACD：{d5['macd']}
 🧾 AI結論：
 {summary}
 """
+    except:
+        return f"{symbol} error"
 
 # ======================
 # MARKET
@@ -183,30 +197,8 @@ def gold():
     return """
 🥇【Gold 波段 / 防守分析】
 
-💰 價格：91.3
-
-⏱️ Timing：🟢 可分批吸納
-📈 趨勢（1h）：📈 偏強
-
-━━━━━━━━━━━━━━
-
-RSI：48.2（正常）
-MACD：🟡 黃金交叉
-
-━━━━━━━━━━━━━━
-
-🎯 入場區：89.5 - 91.0
-🛑 止蝕：87.8
-🎯 目標：95.8
-
-📊 R/R：2.6
-
-━━━━━━━━━━━━━━
-
-🧾 策略：
-
-👉 市場轉弱 → 增持 Gold  
-👉 科技股回調 → Gold 對沖  
+👉 市場轉弱先加  
+👉 對沖科技股  
 👉 ❌ 唔好高追
 """
 
@@ -217,40 +209,14 @@ def long_term():
     return """
 📈【長線投資策略】
 
-🇺🇸 S&P500（VUAG）
-👉 每月 DCA
-👉 回調加碼
-
-━━━━━━━━━━━━━━
-
-🖥 MSFT
-👉 回調買
-👉 長期持有
-
-━━━━━━━━━━━━━━
-
-🌍 VWRA（World Index）
-👉 全球分散
-👉 長期持有
-
-━━━━━━━━━━━━━━
-
-🥇 Gold
-👉 防守資產
-👉 市差先加
-
-━━━━━━━━━━━━━━
-
-📦 建議配置：
-
-45% S&P500  
-25% VWRA  
-20% MSFT  
-10% Gold
+S&P500 → DCA  
+MSFT → 核心  
+VWRA → 分散  
+Gold → 對沖
 """
 
 # ======================
-# ALERT LOOP（升級版）
+# ALERT LOOP
 # ======================
 def loop():
     while True:
@@ -263,17 +229,7 @@ def loop():
                 if d and CHAT_ID:
                     last = last_alert.get("market",0)
                     if "🔴" in d["macd"] and now-last>1800:
-                        send(CHAT_ID,f"""
-🚨【市場轉弱】
-
-📉 SPY 出現轉弱信號
-
-🧠 行動：
-
-👉 ❌ 停止新倉
-👉 ⚠️ 減科技股
-👉 🥇 考慮 Gold
-""")
+                        send(CHAT_ID,"🚨 市場轉弱 → 減倉 / Gold")
                         last_alert["market"]=now
 
             for s in SYMBOLS:
@@ -287,38 +243,17 @@ def loop():
                 last = last_alert.get(s,0)
 
                 if CHAT_ID and d["entry_low"] <= d["price"] <= d["entry_high"] and now-last>600:
-                    send(CHAT_ID,f"""
-🚀【{s} 入場信號】
-
-💰 價格：{d['price']}
-
-🎯 入場區：{d['entry_low']} - {d['entry_high']}
-🛑 止蝕：{d['stop']}
-🎯 目標：{d['target']}
-
-📊 R/R：{d['rr']}
-
-👉 可分批入
-""")
+                    send(CHAT_ID,f"🚀 {s} 入場區")
                     last_alert[s]=now
 
                 elif CHAT_ID and d["price"] < d["entry_high"]*1.05 and now-last>3600:
-                    send(CHAT_ID,f"""
-👀【{s} Setup】
-
-💰 價格：{d['price']}
-
-🎯 入場區：{d['entry_low']} - {d['entry_high']}
-
-👉 準備觀察
-""")
+                    send(CHAT_ID,f"👀 {s} Setup")
                     last_alert[s]=now
 
-            time.sleep(300)
+            time.sleep(600)
 
-        except Exception as e:
-            print("loop error:", e)
-            time.sleep(300)
+        except:
+            time.sleep(600)
 
 threading.Thread(target=loop, daemon=True).start()
 
@@ -339,11 +274,10 @@ def webhook():
         send(chat_id,"✅ Bot working")
 
     elif text.startswith("/stock"):
+        send(chat_id,"📊 分析中...")
         for s in SYMBOLS:
-            try:
-                send(chat_id, stock(s))
-            except:
-                send(chat_id, f"{s} error")
+            send(chat_id, stock(s))
+            time.sleep(1)
 
     elif text.startswith("/market"):
         send(chat_id,market())
