@@ -12,10 +12,10 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 last_alert = {}
 
 # ======================
-# CACHE（防爆 API）
+# CACHE
 # ======================
 cache = {}
-CACHE_TTL = 300  # 5分鐘
+CACHE_TTL = 300
 
 def get_df(symbol, interval):
     key = f"{symbol}_{interval}"
@@ -33,7 +33,8 @@ def get_df(symbol, interval):
 
         cache[key] = (df, now)
         return df
-    except:
+    except Exception as e:
+        print("DATA ERROR:", e)
         return None
 
 # ======================
@@ -45,8 +46,8 @@ def send(chat_id, msg):
             "chat_id": chat_id,
             "text": msg[:4000]
         }, timeout=10)
-    except:
-        pass
+    except Exception as e:
+        print("SEND ERROR:", e)
 
 # ======================
 # CALC
@@ -95,11 +96,12 @@ def calc(df):
             "target": round(target,2),
             "rr": rr
         }
-    except:
+    except Exception as e:
+        print("CALC ERROR:", e)
         return None
 
 # ======================
-# STOCK
+# STOCK ANALYSIS
 # ======================
 def stock(symbol):
     try:
@@ -107,13 +109,13 @@ def stock(symbol):
         df1h = get_df(symbol,"60m")
 
         if df5 is None or df1h is None:
-            return f"{symbol} 數據錯誤"
+            return f"{symbol} ⚠️ 數據暫時不可用"
 
         d5 = calc(df5)
         d1 = calc(df1h)
 
         if not d5 or not d1:
-            return f"{symbol} 計算錯誤"
+            return f"{symbol} ⚠️ 計算錯誤"
 
         if d5["entry_low"] <= d5["price"] <= d5["entry_high"]:
             timing = "🟢 入場區"
@@ -153,8 +155,9 @@ MACD：{d5['macd']}
 🧾 AI結論：
 {summary}
 """
-    except:
-        return f"{symbol} error"
+    except Exception as e:
+        print("STOCK ERROR:", e)
+        return f"{symbol} ❌ error"
 
 # ======================
 # MARKET
@@ -185,9 +188,9 @@ def market():
 
 🧠 行動：
 
-👉 🟢 做強勢股（順勢）
-👉 ❌ 避弱勢股
-👉 ⏳ 等回調入場
+👉 做強勢股
+👉 避弱勢股
+👉 等回調入場
 """
 
 # ======================
@@ -195,10 +198,11 @@ def market():
 # ======================
 def gold():
     return """
-🥇【Gold 波段 / 防守分析】
+🥇【Gold 波段 / 防守】
 
 👉 市場轉弱先加  
 👉 對沖科技股  
+👉 分批買入  
 👉 ❌ 唔好高追
 """
 
@@ -209,10 +213,19 @@ def long_term():
     return """
 📈【長線投資策略】
 
-S&P500 → DCA  
+S&P500 → 每月DCA  
 MSFT → 核心  
 VWRA → 分散  
-Gold → 對沖
+Gold → 對沖  
+
+━━━━━━━━━━━━━━
+
+📦 配置：
+
+👉 45% S&P500  
+👉 25% VWRA  
+👉 20% MSFT  
+👉 10% Gold  
 """
 
 # ======================
@@ -223,19 +236,11 @@ def loop():
         try:
             now = time.time()
 
-            spy = get_df("SPY","60m")
-            if spy:
-                d = calc(spy)
-                if d and CHAT_ID:
-                    last = last_alert.get("market",0)
-                    if "🔴" in d["macd"] and now-last>1800:
-                        send(CHAT_ID,"🚨 市場轉弱 → 減倉 / Gold")
-                        last_alert["market"]=now
-
             for s in SYMBOLS:
                 df = get_df(s,"5m")
                 if not df:
                     continue
+
                 d = calc(df)
                 if not d:
                     continue
@@ -250,17 +255,18 @@ def loop():
                     send(CHAT_ID,f"👀 {s} Setup")
                     last_alert[s]=now
 
-            time.sleep(600)
+            time.sleep(300)
 
-        except:
-            time.sleep(600)
+        except Exception as e:
+            print("LOOP ERROR:", e)
+            time.sleep(10)
 
 threading.Thread(target=loop, daemon=True).start()
 
 # ======================
-# WEBHOOK
+# WEBHOOK（修復）
 # ======================
-@app.route("/webhook", methods=["POST"])
+@app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json(silent=True)
 
@@ -270,8 +276,10 @@ def webhook():
     chat_id = data["message"]["chat"]["id"]
     text = data["message"].get("text","")
 
-    if text.startswith("/check"):
-        send(chat_id,"✅ Bot working")
+    print("RECEIVED:", text)
+
+    if text.startswith("/start"):
+        send(chat_id,"🚀 Bot Ready\n\n/stock /market /gold /long")
 
     elif text.startswith("/stock"):
         send(chat_id,"📊 分析中...")
@@ -289,7 +297,7 @@ def webhook():
         send(chat_id,long_term())
 
     else:
-        send(chat_id,"/stock /market /gold /long")
+        send(chat_id,"指令：/stock /market /gold /long")
 
     return "ok"
 
