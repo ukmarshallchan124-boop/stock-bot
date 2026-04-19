@@ -12,6 +12,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SWING = ["TSLA","NVDA","AMD","XOM","JPM"]
+GOLD = "IAU"  # iShares Gold ETF
 
 cache = {}
 CACHE_TTL = 300
@@ -43,7 +44,7 @@ def market_open():
     return 14 <= now.hour <= 21
 
 # ======================
-# FETCH（含 retry）
+# FETCH
 # ======================
 def fetch(symbol):
     key = symbol
@@ -52,39 +53,38 @@ def fetch(symbol):
     if key in cache and now - cache[key]["time"] < CACHE_TTL:
         return cache[key]["data"]
 
-    for _ in range(3):
-        try:
-            if API_KEY:
-                url = "https://api.twelvedata.com/time_series"
-                params = {
-                    "symbol": symbol,
-                    "interval": "15min",
-                    "outputsize": 100,
-                    "apikey": API_KEY
-                }
-                r = requests.get(url, params=params, timeout=5).json()
+    # Twelve
+    try:
+        if API_KEY:
+            url = "https://api.twelvedata.com/time_series"
+            params = {
+                "symbol": symbol,
+                "interval": "15min",
+                "outputsize": 100,
+                "apikey": API_KEY
+            }
+            r = requests.get(url, params=params, timeout=5).json()
 
-                if "values" in r:
-                    df = pd.DataFrame(list(reversed(r["values"])))
-                    df["close"] = df["close"].astype(float)
-                    df["high"] = df["high"].astype(float)
-                    df["low"] = df["low"].astype(float)
-                    df["volume"] = df["volume"].astype(float)
+            if "values" in r:
+                df = pd.DataFrame(list(reversed(r["values"])))
+                df["close"] = df["close"].astype(float)
+                df["high"] = df["high"].astype(float)
+                df["low"] = df["low"].astype(float)
+                df["volume"] = df["volume"].astype(float)
 
-                    df.rename(columns={
-                        "close":"Close",
-                        "high":"High",
-                        "low":"Low",
-                        "volume":"Volume"
-                    }, inplace=True)
+                df.rename(columns={
+                    "close":"Close",
+                    "high":"High",
+                    "low":"Low",
+                    "volume":"Volume"
+                }, inplace=True)
 
-                    cache[key] = {"data": df, "time": now}
-                    return df
-        except:
-            pass
+                cache[key] = {"data": df, "time": now}
+                return df
+    except:
+        pass
 
-        time.sleep(1)
-
+    # Yahoo fallback
     try:
         df = yf.Ticker(symbol).history(period="5d", interval="15m")
         if not df.empty:
@@ -111,7 +111,7 @@ def indicators(df):
     rs = gain.rolling(14).mean()/loss.rolling(14).mean()
     rsi = round((100-(100/(1+rs))).iloc[-1],1)
 
-    return rsi, trend, ema9.iloc[-1], ema21.iloc[-1]
+    return rsi, trend
 
 def volume_ok(df):
     return df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1]
@@ -126,24 +126,50 @@ def sr(df):
     return df["Low"].rolling(20).min().iloc[-1], df["High"].rolling(20).max().iloc[-1]
 
 # ======================
-# NEWS
+# GOLD ANALYSIS（新增🔥）
 # ======================
-def get_news(symbol):
-    try:
-        news = yf.Ticker(symbol).news[:2]
-        txt=""
-        for n in news:
-            title=n.get("title","")
-            if any(w in title.lower() for w in ["ai","growth","beat"]):
-                tag="🟢"
-            elif any(w in title.lower() for w in ["risk","drop","cut"]):
-                tag="🔴"
-            else:
-                tag="⚪"
-            txt+=f"• {title} {tag}\n"
-        return txt if txt else "⚪ 無新聞"
-    except:
-        return "⚪ 無新聞"
+def gold_analysis():
+    df = fetch(GOLD)
+    if df is None or len(df)<50:
+        return "⚪ Gold 數據不可用"
+
+    price = df["Close"].iloc[-1]
+    low,high = sr(df)
+    rsi,_ = indicators(df)
+
+    entry_low = low
+    entry_high = low*1.02
+    stop = low*0.97
+    target = high
+
+    # timing 判斷
+    if price < entry_low:
+        timing = "🟡 等回調"
+    elif entry_low <= price <= entry_high:
+        timing = "🟢 可分批買入"
+    else:
+        timing = "❌ 唔好追高"
+
+    return f"""
+🟡【Gold ETF（IAU）】
+
+💰 現價：{round(price,2)}
+⏱️ Timing：{timing}
+
+━━━━━━━━━━━━━━━
+
+👉 入場：{round(entry_low,2)} - {round(entry_high,2)}
+👉 止蝕：{round(stop,2)}
+👉 目標：{round(target,2)}
+
+━━━━━━━━━━━━━━━
+
+🧠 策略：
+
+👉 分批買入（唔all-in）
+👉 唔追高
+👉 長線持有（對沖風險）
+"""
 
 # ======================
 # ANALYSIS
@@ -163,7 +189,7 @@ def analyze(symbol):
 
     rr = round((target-entry_low)/(entry_low-stop),2)
 
-    rsi,trend,ema9,ema21 = indicators(df)
+    rsi,trend = indicators(df)
 
     return df,{
         "price":round(price,2),
@@ -173,26 +199,19 @@ def analyze(symbol):
         "target":round(target,2),
         "rr":rr,
         "rsi":rsi,
-        "trend":trend,
-        "ema9":ema9,
-        "ema21":ema21
+        "trend":trend
     }
 
 # ======================
 # FORMAT
 # ======================
 def format_output(symbol,d,df):
-    news = get_news(symbol)
-
     in_zone = d["entry_low"] <= d["price"] <= d["entry_high"]
-    strong = d["ema9"] > d["ema21"] and momentum_ok(df)
 
     if not in_zone:
-        timing = "🟡 未到位（等回調）"
-    elif not strong:
-        timing = "🟡 已到位但未轉強"
+        timing = "🟡 未到位"
     else:
-        timing = "🟢 可考慮入場"
+        timing = "🟢 入場區"
 
     return f"""
 📊【{symbol} 波段分析】
@@ -202,34 +221,19 @@ def format_output(symbol,d,df):
 
 ━━━━━━━━━━━━━━━
 
-📈 趨勢：{"🟢 上升" if d['trend'] else "🔴 偏弱"}
+📈 趨勢：{"🟢 上升" if d['trend'] else "🔴 弱"}
 RSI：{d['rsi']}
-Volume：{"🟢 放量" if volume_ok(df) else "⚪ 正常"}
 
 ━━━━━━━━━━━━━━━
-
-💰 策略
 
 👉 入場：{d['entry_low']} - {d['entry_high']}
 👉 止蝕：{d['stop']}
 👉 目標：{d['target']}
 👉 R/R：{d['rr']}
-
-━━━━━━━━━━━━━━━
-
-🧠 行動：
-
-👉 {"可以考慮小注入場" if strong else "未符合入場條件"}
-👉 唔好追高
-
-━━━━━━━━━━━━━━━
-
-📰 新聞：
-{news}
 """
 
 # ======================
-# LOOP
+# LOOP（保持原樣）
 # ======================
 def loop():
     while True:
@@ -242,36 +246,30 @@ def loop():
 
             for s in SWING:
                 data = analyze(s)
-                if not data:
-                    continue
+                if not data: continue
 
                 df,d = data
                 if d["rr"] < 1.5:
                     continue
 
-                st = state.get(s,{
-                    "setup":0,
-                    "entry":0,
-                    "breakout":0,
-                    "in_zone":False
-                })
+                st = state.get(s,{"setup":0,"entry":0,"breakout":0,"in_zone":False})
 
                 in_zone = d["entry_low"] <= d["price"] <= d["entry_high"]
 
                 if not in_zone and now-st["setup"]>SETUP_CD:
-                    send(CHAT_ID,f"👀【{s} Setup】\n回調區：{d['entry_low']}-{d['entry_high']}")
+                    send(CHAT_ID,f"👀【{s} Setup】\n{d['entry_low']}-{d['entry_high']}")
                     st["setup"]=now
 
                 if in_zone and not st["in_zone"]:
                     if momentum_ok(df) and volume_ok(df) and now-st["entry"]>ENTRY_CD:
-                        send(CHAT_ID,f"🚀【{s} 入場信號】\n入場區：{d['entry_low']}-{d['entry_high']}")
+                        send(CHAT_ID,f"🚀【{s} 入場信號】\n{d['entry_low']}-{d['entry_high']}")
                         st["entry"]=now
 
                 st["in_zone"]=in_zone
 
-                if d["price"]>d["target"] and volume_ok(df):
+                if d["price"]>d["target"]:
                     if now-st["breakout"]>BREAKOUT_CD:
-                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}\n👉 等回調再入")
+                        send(CHAT_ID,f"🚀【{s} 突破】{d['target']}")
                         st["breakout"]=now
 
                 state[s]=st
@@ -283,6 +281,36 @@ def loop():
             time.sleep(10)
 
 threading.Thread(target=loop,daemon=True).start()
+
+# ======================
+# LONG（升級🔥）
+# ======================
+def long_term():
+    gold_txt = gold_analysis()
+
+    return f"""
+💰【長線投資】
+
+📊 S&P500：
+👉 每月DCA
+
+📊 VWRA：
+👉 全球ETF
+
+📊 MSFT：
+👉 等回調5-10%
+
+{gold_txt}
+
+━━━━━━━━━━━━━━━
+
+📦 配置：
+
+👉 45% S&P500
+👉 25% VWRA
+👉 20% MSFT
+👉 10% Gold
+"""
 
 # ======================
 # ROUTES
@@ -300,7 +328,7 @@ def webhook():
     text=data["message"].get("text","")
 
     if text=="/start":
-        send(chat_id,"🚀 Bot Ready（V40.5）")
+        send(chat_id,"🚀 V40.6 Ready")
 
     elif text=="/check":
         for s in SWING:
@@ -309,10 +337,13 @@ def webhook():
                 df,d=data
                 send(chat_id,format_output(s,d,df))
 
+    elif text=="/long":
+        send(chat_id,long_term())
+
     return "ok"
 
 # ======================
-# RUN（🔥最重要）
+# RUN
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
