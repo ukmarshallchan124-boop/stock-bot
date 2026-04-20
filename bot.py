@@ -254,7 +254,7 @@ def loop():
                 # ======================
                 # 🟢 ENTRY（詳細）
                 # ======================
-                if decision == "ENTRY":
+                if decision == "ENTRY" and allow_trade:
                     if now - last_alert.get(s+"_entry",0) > 1800:
                         send(CHAT_ID, f"""🟢【ENTRY】{s}
 
