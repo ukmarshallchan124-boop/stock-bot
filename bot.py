@@ -14,63 +14,10 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 last_alert = {}
 cache = {}
 CACHE_TTL = 120
-# ======================
-# Signal Engine
-# ======================
-def signal_engine(df, d):
-    try:
-        price = d["price"]
 
-        # === 結構（Structure）
-        recent_high = df["High"].iloc[-20:-3].max()
-        recent_low = df["Low"].iloc[-20:-3].min()
-
-        # === Setup 判斷
-        if d["trend_up"]:
-            setup = "Pullback (Bullish)"
-        else:
-            setup = "Weak / Range"
-
-        # === Entry 區
-        entry_low = d["entry_low"]
-        entry_high = d["entry_high"]
-
-        in_entry = entry_low <= price <= entry_high
-
-        # === Breakout
-        breakout = (
-            df["Close"].iloc[-1] > recent_high and
-            df["Close"].iloc[-2] > recent_high
-        )
-
-        # === Risk Off（跌穿結構）
-        risk_off = price < recent_low
-
-        # === Decision（最重要）
-        if breakout:
-            decision = "🚀 BREAKOUT"
-        elif in_entry:
-            decision = "🟢 ENTRY"
-        elif risk_off:
-            decision = "🔴 RISK OFF"
-        else:
-            decision = "🟡 WAIT"
-
-        return {
-            "setup": setup,
-            "entry_low": entry_low,
-            "entry_high": entry_high,
-            "breakout": round(recent_high,2),
-            "risk_off": round(recent_low,2),
-            "decision": decision
-        }
-
-    except Exception as e:
-        print("SIGNAL ERROR:", e)
-        return None
 
 # ======================
-# DATA
+# DATA（穩定 + cache）
 # ======================
 def get_df(symbol, interval):
     key = f"{symbol}_{interval}"
@@ -98,6 +45,7 @@ def get_df(symbol, interval):
             del cache[oldest]
 
         return df
+
     except Exception as e:
         print("DATA ERROR:", e)
         return None
@@ -156,13 +104,13 @@ def calc(df):
         return {
             "price": price,
             "rsi": rsi,
-            "macd_up": macd_up,
             "trend_up": trend_up,
             "entry_low": entry_low,
             "entry_high": entry_high,
             "stop": stop,
             "target": target,
-            "rr": rr
+            "rr": rr,
+            "macd_up": macd_up
         }
 
     except Exception as e:
@@ -171,58 +119,40 @@ def calc(df):
 
 
 # ======================
-# COMMAND
+# 分析腦（UI）
 # ======================
 def stock_all():
-    msg = "📊【Stock Scanner｜美股掃描】\n\n"
+    msg = "📊【市場掃描】\n\n"
 
     for s in SYMBOLS:
         df = get_df(s,"5m")
         if not df:
-            msg += f"⚠️ {s} Data Error\n\n"
             continue
 
         d = calc(df)
         if not d:
-            msg += f"⚠️ {s} Calc Error\n\n"
             continue
 
-        # ===== SIGNAL LOGIC（升級版）=====
-        setup = "Range"
-        if d["trend_up"]:
-            setup = "Pullback (Uptrend)"
-        else:
-            setup = "Weak Structure"
-
-        # entry 判斷
+        zone = "🟡 Watch"
         if d["entry_low"] <= d["price"] <= d["entry_high"]:
-            decision = "🟢 ENTER"
-        elif d["price"] < d["entry_low"]:
-            decision = "🟡 WAIT"
-        else:
-            decision = "⚠️ EXTENDED"
+            zone = "🟢 Entry Zone"
 
-        # momentum
-        momentum = "Strong" if d["macd_up"] else "Weak"
+        msg += f"""📌 {s}
+💰 {round(d['price'],2)} ｜ RSI {d['rsi']}
+Trend: {"Up" if d['trend_up'] else "Down"}
 
-        msg += f"""📌 {s} — Intraday
+🎯 Entry {round(d['entry_low'],2)}-{round(d['entry_high'],2)}
+🛑 Stop {round(d['stop'],2)}
+🎯 Target {round(d['target'],2)}
+📊 RR {round(d['rr'],2)}
 
-💰 Price: {round(d['price'],2)}
-📈 Trend: {"Uptrend" if d['trend_up'] else "Downtrend"}
-⚡ Momentum: {momentum}
+📌 策略：
+👉 {"可考慮入場" if zone=="🟢 Entry Zone" else "等待確認"}
 
-🧠 Setup: {setup}
-🎯 Entry: {round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 Risk Off: {round(d['stop'],2)}
-🚀 Target: {round(d['target'],2)}
-
-📊 R/R: {round(d['rr'],2)}
-
-{decision}
+{zone}
 ━━━━━━━━━━━━━━
 """
-
-    return msg
+    return msg or "⚠️ 無數據"
 
 
 def market():
@@ -230,18 +160,10 @@ def market():
     if not df:
         return "⚠️ 市場數據錯誤"
 
-    d = calc(df)
-    if not d:
-        return "⚠️ 市場計算錯誤"
-
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     ma5 = df["Close"].rolling(5).mean().iloc[-1]
 
-    strength = abs(ma5-ma20)/ma20
-
-    if strength < 0.002:
-        state = "⚠️ Sideways"
-    elif ma5 < ma20:
+    if ma5 < ma20:
         state = "🔻 Downtrend"
     else:
         state = "🟢 Uptrend"
@@ -254,65 +176,31 @@ def gold():
 
 
 def long_term():
-    msg = "📈【Long-Term Portfolio｜長線配置】\n\n"
+    return "📈 長線 DCA"
 
-    msg += analyze_long("MSFT", "Microsoft")
-    msg += analyze_long("SPY", "S&P 500")
-    msg += analyze_long("VT", "World Index")
-    msg += analyze_long("GLD", "Gold ETF")
 
-    return msg
 # ======================
-# UI（專業版）
-# ======================
-def analyze_long(symbol, name):
-    df = get_df(symbol, "1d")
-    if not df:
-        return f"⚠️ {name} Data Error\n\n"
-
-    d = calc(df)
-    if not d:
-        return f"⚠️ {name} Calc Error\n\n"
-
-    price = round(d["price"],2)
-
-    # 趨勢
-    trend = "Uptrend" if d["trend_up"] else "Downtrend"
-
-    # 狀態判斷
-    if d["rsi"] > 70:
-        state = "Overbought"
-        decision = "⚠️ WAIT DIP"
-        strategy = "Avoid chasing"
-    elif d["rsi"] < 40:
-        state = "Undervalued Zone"
-        decision = "🟢 ACCUMULATE"
-        strategy = "DCA / Buy"
-    else:
-        state = "Neutral"
-        decision = "🟡 HOLD"
-        strategy = "DCA Slowly"
-
-    return f"""🟦 {name} ({symbol})
-
-💰 Price: {price}
-📈 Trend: {trend}
-📊 RSI: {d['rsi']}
-
-🧠 Strategy: {strategy}
-📅 Plan: Weekly DCA
-⚠️ State: {state}
-
-{decision}
-━━━━━━━━━━━━━━
-"""
-# ======================
-# LOOP
+# 交易腦（Signal Engine）
 # ======================
 def loop():
     while True:
         try:
             now = time.time()
+            candidates = []
+
+            spy = get_df("SPY","15m")
+            allow_trade = True
+
+            if spy:
+                ma20 = spy["Close"].rolling(20).mean().iloc[-1]
+                ma5 = spy["Close"].rolling(5).mean().iloc[-1]
+
+                if ma5 < ma20:
+                    allow_trade = False
+
+                    if now - last_alert.get("risk",0) > 1800:
+                        send(CHAT_ID,"🚨【Risk Off】市場轉弱 → 減倉")
+                        last_alert["risk"] = now
 
             for s in SYMBOLS:
                 df = get_df(s,"5m")
@@ -330,9 +218,60 @@ def loop():
                     df["Close"].iloc[-2] > recent_high
                 )
 
-                if breakout and now - last_alert.get(s,0) > 600:
-                    send(CHAT_ID,f"📢 Breakout {s}")
-                    last_alert[s] = now
+                vol = df["Volume"]
+                vol_ma = vol.rolling(10).mean().iloc[-1]
+                volume_spike = vol.iloc[-1] > vol_ma * 1.5
+
+                # Setup
+                if d["entry_low"]*0.995 < d["price"] < d["entry_high"]*1.005:
+                    if now - last_alert.get(s+"_setup",0) > 1800:
+                        send(CHAT_ID,f"👀【Setup】{s}\n接近入場區")
+                        last_alert[s+"_setup"] = now
+
+                # Breakout
+                if breakout and now - last_alert.get(s+"_bo",0) > 1800:
+                    send(CHAT_ID,f"📢【Breakout】{s}")
+                    last_alert[s+"_bo"] = now
+
+                # Entry
+                if (
+                    allow_trade
+                    and breakout
+                    and volume_spike
+                    and d["trend_up"]
+                    and 55 < d["rsi"] < 68
+                    and d["rr"] > 1.5
+                ):
+                    score = d["rr"]*2 + (70-abs(d["rsi"]-60))
+
+                    grade = "C"
+                    if score > 10:
+                        grade="A"
+                    elif score > 7:
+                        grade="B"
+
+                    candidates.append((s,d,score,grade))
+
+            if candidates:
+                top = sorted(candidates,key=lambda x:x[2],reverse=True)[:3]
+
+                msg = "🚀【Top Signals】\n\n"
+
+                for s,d,score,grade in top:
+                    if now - last_alert.get(s,0) > 600:
+                        msg += f"""📈 {s} ｜ Grade {grade}
+
+🎯 Entry {round(d['entry_low'],2)}-{round(d['entry_high'],2)}
+🛑 Stop {round(d['stop'],2)}
+🎯 Target {round(d['target'],2)}
+
+📊 RR {round(d['rr'],2)}
+
+━━━━━━━━━━━━━━
+"""
+                        last_alert[s] = now
+
+                send(CHAT_ID,msg)
 
             time.sleep(300)
 
@@ -349,12 +288,11 @@ def start_background():
         threading.Thread(target=loop, daemon=True).start()
         start_background.started = True
 
-
 start_background()
 
 
 # ======================
-# WEBHOOK（完全修復）
+# WEBHOOK
 # ======================
 @app.route("/", methods=["POST"])
 def webhook():
@@ -364,19 +302,11 @@ def webhook():
         return "ok"
 
     message = data.get("message") or data.get("edited_message") or data.get("channel_post")
-
     if not message:
         return "ok"
 
     chat_id = message["chat"]["id"]
-    text = message.get("text","")
-
-    if not text:
-        return "ok"
-
-    text = text.lower()
-
-    print("RECEIVED:", text)
+    text = message.get("text","").lower()
 
     if "/start" in text:
         send(chat_id,"🚀 Bot Ready\n/stock /market /gold /long")
