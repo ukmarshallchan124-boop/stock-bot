@@ -482,7 +482,8 @@ def webhook():
     try:
         data = request.get_json()
         print("IN:", data)
-        print("TEXT:", text)
+        text = message.get("text","").lower().strip()
+print("TEXT:", text)
         if not data:
             return "ok"
 
