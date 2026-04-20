@@ -13,6 +13,16 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 last_alert = {}
 cache = {}
 CACHE_TTL = 120
+# ======================
+# 新增：多時間框架 helper
+# ======================
+def get_trend(symbol):
+    df_15 = get_df(symbol,"15m")
+    if not df_15:
+        return "未知"
+
+    ma = df_15["Close"].rolling(20).mean().iloc[-1]
+    return "上升" if df_15["Close"].iloc[-1] > ma else "下降"
 
 # ======================
 # SIGNAL ENGINE
@@ -239,17 +249,14 @@ def loop():
 def stock_all():
     allow, market_msg = market_filter()
 
-    header = "🟢 市場偏多" if allow else "🔴 市場偏弱"
-
-    msg = f"""📊【市場掃描】
+    msg = f"""📊【市場掃描 Pro】
 {market_msg}
-{header}
 
 ━━━━━━━━━━━━━━
 """
 
-    for s in SYMBOLS[:3]:
-        df = get_df(s, "5m")
+    for s in SYMBOLS:
+        df = get_df(s,"5m")
         if not df:
             continue
 
@@ -257,28 +264,38 @@ def stock_all():
         if not d:
             continue
 
-        sig = signal_engine(df, d)
+        sig = signal_engine(df,d)
         decision = sig["decision"]
 
-        if decision == "ENTRY":
-            signal_ui = "🟢 入場"
-        elif decision == "BREAKOUT":
-            signal_ui = "🚀 突破"
-        elif decision == "SETUP":
-            signal_ui = "👀 準備"
-        elif decision == "RISK":
-            signal_ui = "🔴 風險"
-        else:
-            signal_ui = "🟡 觀望"
+        trend_big = get_trend(s)
 
+        # UI mapping
+        mapping = {
+            "ENTRY":"🟢 入場",
+            "BREAKOUT":"🚀 突破",
+            "SETUP":"👀 準備",
+            "RISK":"🔴 風險",
+            "WAIT":"🟡 觀望"
+        }
+
+        signal_ui = mapping.get(decision,"🟡")
+
+        # 市場過濾
         if not allow and decision in ["ENTRY","BREAKOUT"]:
             signal_ui = "❌ 市場弱（無效）"
 
         msg += f"""📈 {s}
+
 💰 {round(d['price'],2)} ｜ RSI {d['rsi']}
 📊 RR：{round(d['rr'],2)}
 
-👉 {signal_ui}
+📈 大趨勢（15m）：{trend_big}
+📉 小趨勢（5m）：{"上升" if d['trend_up'] else "下降"}
+
+🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+🛑 止損：{round(d['stop'],2)}
+
+👉 信號：{signal_ui}
 
 ━━━━━━━━━━━━━━
 """
@@ -286,30 +303,80 @@ def stock_all():
     return msg
 
 def market():
-    allow, msg = market_filter()
-    return f"""🌍【市場狀態】
+    df = get_df("SPY","15m")
+    if not df:
+        return "⚠️ 市場數據不足"
 
-{msg}
+    price = df["Close"].iloc[-1]
+    ma20 = df["Close"].rolling(20).mean().iloc[-1]
 
-👉 {"🟢 偏多" if allow else "🔴 偏弱"}
+    trend = "上升" if price > ma20 else "下降"
+
+    return f"""🌍【市場分析】
+
+📊 S&P500（SPY）
+趨勢：{trend}
+
+📉 結構：
+{"仍然健康" if trend=="上升" else "開始轉弱"}
+
+📊 解讀：
+👉 {"可做多（但控風險）" if trend=="上升" else "減倉 / 保守"}
 
 ━━━━━━━━━━━━━━
 """
 
 def gold():
-    return """🥇【黃金】
+    df = get_df("GC=F","15m")  # 黃金期貨
+    if not df:
+        return "⚠️ 黃金數據不足"
 
-避險資產
-市場差先考慮
+    price = df["Close"].iloc[-1]
+    ma20 = df["Close"].rolling(20).mean().iloc[-1]
+
+    trend = "上升" if price > ma20 else "下降"
+
+    return f"""🥇【黃金分析】
+
+💰 價格：{round(price,2)}
+
+📈 趨勢：{trend}
+
+📊 邏輯：
+• 市場風險 ↑ → 黃金 ↑
+• 利率 ↓ → 黃金 ↑
+
+👉 建議：
+{"可作避險配置" if trend=="上升" else "暫時觀望"}
 
 ━━━━━━━━━━━━━━
 """
 
 def long_term():
-    return """📈【長線】
+    spy = get_df("SPY","1d")
+    msft = get_df("MSFT","1d")
+    vwra = get_df("VWRA.L","1d")
 
-DCA 投資
-S&P500 / TSLA / NVDA
+    def trend(df):
+        if not df: return "未知"
+        price = df["Close"].iloc[-1]
+        ma = df["Close"].rolling(50).mean().iloc[-1]
+        return "上升" if price > ma else "回調"
+
+    return f"""📈【長線投資】
+
+📊 S&P500（SPY）：{trend(spy)}
+👉 核心市場
+
+📊 VWRA（全球）：{trend(vwra)}
+👉 分散風險
+
+📊 Microsoft：{trend(msft)}
+👉 科技龍頭
+
+💡 策略：
+• 上升 → 持續DCA
+• 回調 → 分段加倉
 
 ━━━━━━━━━━━━━━
 """
