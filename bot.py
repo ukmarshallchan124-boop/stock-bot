@@ -135,10 +135,9 @@ def calc(df):
         entry_low = low * 1.01
         entry_high = low * 1.03
         stop = low * 0.97
-        target = high * 1.02
-
-        rr = (target - entry_low) / (entry_low - stop) if entry_low > stop else 0
-
+        target = high * 1.02risk        
+        risk = entry_low - strr
+        rr = (target - entry_low) / risk if risk > 0 else 0
         return {
             "price": price,
             "rsi": rsi,
@@ -228,7 +227,7 @@ def loop():
                     score += 1
 
                 # 🔥 只留高質
-                if score < 4:
+                if score < 3.5:
                     continue
 
                 candidates.append((s, d, score, decision))
