@@ -328,34 +328,6 @@ def send(chat_id, msg):
         print("SEND ERROR:", e)
 
 # ======================
-# LOOP
-# ======================
-def loop():
-    while True:
-        try:
-            allow_trade, _ = market_filter()
-
-            for s in SYMBOLS:
-                df = get_df(s, "5m")
-                if not df:
-                    continue
-
-                d = calc(df)
-                if not d:
-                    continue
-
-                sig = signal_engine(df, d)
-
-                if sig["decision"] == "ENTRY" and allow_trade:
-                    send(CHAT_ID, f"🟢 ENTRY {s} @{round(d['price'],2)}")
-
-            time.sleep(300)
-
-        except Exception as e:
-            print("LOOP ERROR:", e)
-            time.sleep(10)
-
-# ======================
 # START
 # ======================
 def start_background():
