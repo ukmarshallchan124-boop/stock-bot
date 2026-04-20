@@ -1,6 +1,7 @@
 from flask import Flask, request
 import requests, os, time, threading
 import yfinance as yf
+import pandas as pd
 
 app = Flask(__name__)
 
@@ -35,8 +36,10 @@ def signal_engine(df, d):
 
     vol = df["Volume"]
     vol_ma = vol.rolling(10).mean().iloc[-1]
+    volume_spike = False
+if vol_ma and not pd.isna(vol_ma):
     volume_spike = vol.iloc[-1] > vol_ma * 1.5
-
+    
     breakout = (
         df["Close"].iloc[-1] > recent_high and
         df["Close"].iloc[-2] > recent_high
@@ -476,7 +479,7 @@ def webhook():
     try:
         data = request.get_json()
         print("IN:", data)
-
+        print("TEXT:", text)
         if not data:
             return "ok"
 
