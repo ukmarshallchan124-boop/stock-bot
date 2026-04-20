@@ -301,7 +301,7 @@ def loop():
 🛑 止損：{round(d['stop'],2)}
 
 👉 信號：{decision}
-
+⭐ Score：{round(score,1)}
 ━━━━━━━━━━
 """
                         last_alert[s] = now
