@@ -154,7 +154,15 @@ def calc(df):
 # ======================
 def stock_all():
     allow, market_msg = market_filter()
-    msg = f"📊【市場掃描 Pro】\n{market_msg}\n\n"
+
+    header = "🟢 市場偏多" if allow else "🔴 市場偏弱"
+
+    msg = f"""📊【市場掃描 Pro】
+{market_msg}
+{header}
+
+━━━━━━━━━━━━━━
+"""
 
     for s in SYMBOLS[:3]:
         df = get_df(s, "5m")
@@ -168,25 +176,43 @@ def stock_all():
         sig = signal_engine(df, d)
         decision = sig["decision"]
 
-        if not allow:
-            if decision == "ENTRY":
-                decision = "BLOCK"
-            elif decision == "BREAKOUT":
-                decision = "FAKE"
+        # 🎯 decision UI mapping
+        if decision == "ENTRY":
+            signal_ui = "🟢 入場機會"
+            action = "👉 可考慮入場"
+        elif decision == "BREAKOUT":
+            signal_ui = "🚀 突破動能"
+            action = "👉 可跟勢追"
+        elif decision == "SETUP":
+            signal_ui = "👀 準備區"
+            action = "👉 等待觸發"
+        elif decision == "RISK":
+            signal_ui = "🔴 風險區"
+            action = "👉 避免交易"
+        else:
+            signal_ui = "🟡 觀望"
+            action = "👉 暫時無操作"
+
+        # 市場弱 filter
+        if not allow and decision in ["ENTRY","BREAKOUT"]:
+            signal_ui = "❌ 無效（市場弱）"
+            action = "👉 暫停交易"
 
         trend = "🟢 上升" if d["trend_up"] else "🔻 下降"
 
         msg += f"""📈 {s}
 
-💰 價格：{round(d['price'],2)} ｜ RSI：{d['rsi']}
+💰 {round(d['price'],2)} ｜ RSI {d['rsi']}
 📊 RR：{round(d['rr'],2)}
 
 📈 趨勢：{trend}
 
-👉 信號：{decision}
+👉 信號：{signal_ui}
+{action}
 
 ━━━━━━━━━━━━━━
 """
+
     return msg
 
 # ======================
@@ -298,7 +324,9 @@ def loop():
 💰 現價：{round(d['price'],2)}
 🎯 入場區：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 
-👉 未觸發，等待入場
+📊 RR：{round(d['rr'],2)}
+
+👉 未觸發，等回調入場
 ━━━━━━━━━━━━━━
 """)
                         last_alert[s+"_setup"] = now
@@ -311,12 +339,14 @@ def loop():
                         send(CHAT_ID, f"""🟢【ENTRY 入場】{s}
 
 💰 價格：{round(d['price'],2)}
-🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+
+🎯 入場區：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 🛑 止損：{round(d['stop'],2)}
+🎯 目標：{round(d['target'],2)}
 
 📊 RR：{round(d['rr'],2)}
 
-👉 可考慮入場（記得止損）
+👉 可考慮入場（控制風險）
 ━━━━━━━━━━━━━━
 """)
                         last_alert[s+"_entry"] = now
@@ -326,13 +356,14 @@ def loop():
                 # ======================
                 if decision == "RISK":
                     if now - last_alert.get(s+"_risk",0) > 1800:
-                        send(CHAT_ID, f"""🔴【RISK OFF 危險】{s}
+                        send(CHAT_ID, f"""🔴【RISK OFF】{s}
 
 💰 現價：{round(d['price'],2)}
 
-👉 結構已破
-👉 避免做多
+⚠️ 結構已破
+📉 趨勢轉弱
 
+👉 避免做多 / 考慮止蝕
 ━━━━━━━━━━━━━━
 """)
                         last_alert[s+"_risk"] = now
