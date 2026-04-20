@@ -319,8 +319,7 @@ def loop():
 def stock_all():
     allow, market_msg = market_filter()
 
-    header = "🟢 市場偏多（可進攻）" 
-    if allow else "🔴 市場偏弱（保守）"
+    header = "🟢 市場偏多（可進攻）" if allow else "🔴 市場偏弱（保守）"
     msg = f"""📊【市場掃描 Pro】
 {market_msg}
 {header}
