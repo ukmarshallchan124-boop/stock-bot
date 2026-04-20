@@ -201,9 +201,58 @@ def gold():
 
 
 def long_term():
-    return "📈 長線 DCA"
+    msg = "📈【Long-Term Portfolio｜長線配置】\n\n"
 
+    msg += analyze_long("MSFT", "Microsoft")
+    msg += analyze_long("SPY", "S&P 500")
+    msg += analyze_long("VT", "World Index")
+    msg += analyze_long("GLD", "Gold ETF")
 
+    return msg
+# ======================
+# UI（專業版）
+# ======================
+def analyze_long(symbol, name):
+    df = get_df(symbol, "1d")
+    if not df:
+        return f"⚠️ {name} Data Error\n\n"
+
+    d = calc(df)
+    if not d:
+        return f"⚠️ {name} Calc Error\n\n"
+
+    price = round(d["price"],2)
+
+    # 趨勢
+    trend = "Uptrend" if d["trend_up"] else "Downtrend"
+
+    # 狀態判斷
+    if d["rsi"] > 70:
+        state = "Overbought"
+        decision = "⚠️ WAIT DIP"
+        strategy = "Avoid chasing"
+    elif d["rsi"] < 40:
+        state = "Undervalued Zone"
+        decision = "🟢 ACCUMULATE"
+        strategy = "DCA / Buy"
+    else:
+        state = "Neutral"
+        decision = "🟡 HOLD"
+        strategy = "DCA Slowly"
+
+    return f"""🟦 {name} ({symbol})
+
+💰 Price: {price}
+📈 Trend: {trend}
+📊 RSI: {d['rsi']}
+
+🧠 Strategy: {strategy}
+📅 Plan: Weekly DCA
+⚠️ State: {state}
+
+{decision}
+━━━━━━━━━━━━━━
+"""
 # ======================
 # LOOP
 # ======================
