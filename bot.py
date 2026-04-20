@@ -144,7 +144,95 @@ def calc(df):
     except Exception as e:
         print("CALC ERROR:", e)
         return None
+# ======================
+# AUTO SIGNAL LOOP（🔥核心）
+# ======================
+def loop():
+    while True:
+        try:
+            now = time.time()
+            allow_trade, market_msg = market_filter()
 
+            for s in SYMBOLS:
+                df = get_df(s,"5m")
+                if not df:
+                    continue
+
+                d = calc(df)
+                if not d:
+                    continue
+
+                sig = signal_engine(df, d)
+                decision = sig["decision"]
+
+                # 👀 SETUP
+                if decision == "SETUP":
+                    if now - last_alert.get(s+"_setup",0) > 1800:
+                        send(CHAT_ID, f"""👀【SETUP 準備區】{s}
+
+💰 價格：{round(d['price'],2)}
+🎯 入場區：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+
+📊 RR：{round(d['rr'],2)}
+
+👉 等回調確認
+━━━━━━━━━━━━━━
+""")
+                        last_alert[s+"_setup"] = now
+
+                # 🟢 ENTRY
+                if decision == "ENTRY" and allow_trade:
+                    if now - last_alert.get(s+"_entry",0) > 1800:
+                        send(CHAT_ID, f"""🟢【ENTRY 入場】{s}
+
+💰 價格：{round(d['price'],2)}
+
+🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+🛑 止損：{round(d['stop'],2)}
+🎯 目標：{round(d['target'],2)}
+
+📊 RR：{round(d['rr'],2)}
+
+👉 可考慮入場（記得控風險）
+━━━━━━━━━━━━━━
+""")
+                        last_alert[s+"_entry"] = now
+
+                # 🚀 BREAKOUT
+                if decision == "BREAKOUT" and allow_trade:
+                    if now - last_alert.get(s+"_bo",0) > 1800:
+                        send(CHAT_ID, f"""🚀【BREAKOUT 突破】{s}
+
+💰 價格：{round(d['price'],2)}
+
+📈 動能突破 + 放量
+📊 RR：{round(d['rr'],2)}
+
+👉 可順勢跟進（勿追高）
+━━━━━━━━━━━━━━
+""")
+                        last_alert[s+"_bo"] = now
+
+                # 🔴 RISK OFF
+                if decision == "RISK":
+                    if now - last_alert.get(s+"_risk",0) > 1800:
+                        send(CHAT_ID, f"""🔴【RISK OFF】{s}
+
+💰 價格：{round(d['price'],2)}
+
+⚠️ 跌穿結構
+📉 趨勢轉弱
+
+👉 停止做多 / 考慮止蝕
+━━━━━━━━━━━━━━
+""")
+                        last_alert[s+"_risk"] = now
+
+            time.sleep(300)
+
+        except Exception as e:
+            print("LOOP ERROR:", e)
+            time.sleep(10)
 # ======================
 # UI
 # ======================
