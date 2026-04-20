@@ -36,10 +36,11 @@ def signal_engine(df, d):
 
     vol = df["Volume"]
     vol_ma = vol.rolling(10).mean().iloc[-1]
+
     volume_spike = False
-if vol_ma is not None and not pd.isna(vol_ma):
-    volume_spike = vol.iloc[-1] > vol_ma * 1.5
-    
+    if vol_ma is not None and not pd.isna(vol_ma):
+        volume_spike = vol.iloc[-1] > vol_ma * 1.5
+
     breakout = (
         df["Close"].iloc[-1] > recent_high and
         df["Close"].iloc[-2] > recent_high
