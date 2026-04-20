@@ -211,54 +211,156 @@ def loop():
             now = time.time()
             allow_trade, market_msg = market_filter()
 
+            candidates = []
+
             for s in SYMBOLS:
-                df = get_df(s,"5m")
-                if not df:
+                df = get_df(s, "5m")
+                df_15m = get_df(s, "15m")
+
+                if not df or not df_15m:
                     continue
 
                 d = calc(df)
                 if not d:
                     continue
 
+                # ======================
+                # 🔥 多時間框架（大方向）
+                # ======================
+                ma20_15m = df_15m["Close"].rolling(20).mean().iloc[-1]
+                trend_15m = df_15m["Close"].iloc[-1] > ma20_15m
+
+                if not trend_15m:
+                    continue
+
+                # ======================
+                # 🔥 結構（Higher Low）
+                # ======================
+                low1 = df["Low"].iloc[-10:-5].min()
+                low2 = df["Low"].iloc[-20:-10].min()
+
+                if low1 <= low2:
+                    continue
+
                 sig = signal_engine(df, d)
                 decision = sig["decision"]
 
-                # 👀 SETUP
+                # ======================
+                # 🔥 假突破過濾
+                # ======================
+                recent_high = df["High"].iloc[-20:-3].max()
+                fake_bo = (
+                    df["Close"].iloc[-1] > recent_high and
+                    df["Close"].iloc[-2] < recent_high
+                )
+
+                if fake_bo:
+                    continue
+
+                # ======================
+                # 市場弱 = 唔做
+                # ======================
+                if not allow_trade:
+                    continue
+
+                # ======================
+                # 🔥 Scoring（只留高質）
+                # ======================
+                score = 0
+
+                if decision == "ENTRY":
+                    score += 2
+
+                if decision == "BREAKOUT":
+                    score += 2.5
+
+                if d["macd_up"]:
+                    score += 1
+
+                if sig["volume_spike"]:
+                    score += 1
+
+                if d["rr"] > 2:
+                    score += 1
+
+                if score < 4:
+                    continue
+
+                candidates.append((s, d, score, decision))
+
+                # ======================
+                # 👀 SETUP UI（升級版）
+                # ======================
                 if decision == "SETUP":
                     if now - last_alert.get(s+"_setup",0) > 1800:
-                        send(CHAT_ID, f"""👀【SETUP】{s}
+                        send(CHAT_ID, f"""👀【SETUP 準備區】{s}
 
 💰 現價：{round(d['price'],2)}
 🎯 入場區：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 
-👉 等待入場
+👉 未觸發，等待入場
+━━━━━━━━━━━━━━
 """)
                         last_alert[s+"_setup"] = now
 
-                # 🟢 ENTRY
-                if decision == "ENTRY" and allow_trade:
+                # ======================
+                # 🟢 ENTRY UI（升級版）
+                # ======================
+                if decision == "ENTRY":
                     if now - last_alert.get(s+"_entry",0) > 1800:
-                        send(CHAT_ID, f"""🟢【ENTRY】{s}
+                        send(CHAT_ID, f"""🟢【ENTRY 入場】{s}
 
 💰 價格：{round(d['price'],2)}
 🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 🛑 止損：{round(d['stop'],2)}
 
 📊 RR：{round(d['rr'],2)}
+
+👉 可考慮入場（記得止損）
+━━━━━━━━━━━━━━
 """)
                         last_alert[s+"_entry"] = now
 
-                # 🔴 RISK OFF
+                # ======================
+                # 🔴 RISK OFF UI（升級版）
+                # ======================
                 if decision == "RISK":
                     if now - last_alert.get(s+"_risk",0) > 1800:
-                        send(CHAT_ID, f"""🔴【RISK OFF】{s}
+                        send(CHAT_ID, f"""🔴【RISK OFF 危險】{s}
 
 💰 現價：{round(d['price'],2)}
 
-👉 趨勢轉弱
-👉 避免入場
+👉 結構已破
+👉 避免做多
+
+━━━━━━━━━━━━━━
 """)
                         last_alert[s+"_risk"] = now
+
+            # ======================
+            # 🚀 只出最強（Top 1）
+            # ======================
+            if candidates:
+                top = sorted(candidates, key=lambda x: x[2], reverse=True)[:1]
+
+                msg = f"🚀【今日最強信號】\n{market_msg}\n\n"
+
+                for s, d, score, decision in top:
+                    if now - last_alert.get(s,0) > 600:
+                        msg += f"""📈 {s}
+
+💰 價格：{round(d['price'],2)}
+📊 RR：{round(d['rr'],2)}
+
+🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+🛑 止損：{round(d['stop'],2)}
+
+👉 信號：{decision}
+━━━━━━━━━━━━━━
+"""
+                        last_alert[s] = now
+
+                send(CHAT_ID, msg)
 
             time.sleep(300)
 
