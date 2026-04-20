@@ -40,19 +40,19 @@ def signal_engine(df, d):
     good_rsi = 52 < d["rsi"] < 65
 
     if risk_off:
-        decision = "🔴 Risk Off（跌穿結構）"
+        decision = "RISK"
 
     elif breakout and volume_spike and d["trend_up"] and good_rr and d["rsi"] < 70:
-        decision = "🚀 Breakout（突破 + 放量）"
+        decision = "BREAKOUT"
 
     elif in_entry and d["trend_up"] and good_rsi and good_rr:
-        decision = "🟢 Entry（回調入場）"
+        decision = "ENTRY"
 
     elif near_entry:
-        decision = "👀 Setup（接近入場）"
+        decision = "SETUP"
 
     else:
-        decision = "🟡 觀望"
+        decision = "WAIT"
 
     return {
         "decision": decision,
@@ -148,15 +148,15 @@ def calc(df):
     except Exception as e:
         print("CALC ERROR:", e)
         return None
-# ======================
-# UI FUNCTIONS
-# ======================
 
+# ======================
+# UI - STOCK
+# ======================
 def stock_all():
     allow, market_msg = market_filter()
     msg = f"📊【市場掃描 Pro】\n{market_msg}\n\n"
 
-    for s in SYMBOLS[:3]:  # 最多3隻
+    for s in SYMBOLS[:3]:
         df = get_df(s, "5m")
         if not df:
             continue
@@ -168,132 +168,27 @@ def stock_all():
         sig = signal_engine(df, d)
         decision = sig["decision"]
 
-        # ⭐ 評分
-        score = d["rr"]
-        if "Entry" in decision:
-            score += 1
-        if "Breakout" in decision:
-            score += 1.5
-        if d["macd_up"]:
-            score += 0.5
+        if not allow:
+            if decision == "ENTRY":
+                decision = "BLOCK"
+            elif decision == "BREAKOUT":
+                decision = "FAKE"
 
-        # 等級
-        grade = "C"
-        if score > 3:
-            grade = "A"
-        elif score > 2.5:
-            grade = "B"
-
-        # 🎯 操作建議
-        if "Entry" in decision:
-            action = "👉 可考慮入場"
-        elif "Breakout" in decision:
-            action = "👉 留意突破跟進"
-        elif "Risk Off" in decision:
-            action = "👉 避免交易"
-        else:
-            action = "👉 等待機會"
-
-        # 📊 趨勢
         trend = "🟢 上升" if d["trend_up"] else "🔻 下降"
-        momentum = "強" if d["macd_up"] else "弱"
 
-        # 🧠 分析
-        if "Entry" in decision:
-            reason = "回調支撐 + 上升趨勢"
-        elif "Breakout" in decision:
-            reason = "突破前高 + 成交量"
-        elif "Risk Off" in decision:
-            reason = "跌穿結構"
-        else:
-            reason = "未有明確優勢"
+        msg += f"""📈 {s}
 
-        msg += f"""📈 {s} ｜ ⭐ {grade}
-
-💰 價格：{round(d['price'],2)}
-📊 RSI：{d['rsi']} ｜ RR：{round(d['rr'],2)}
+💰 價格：{round(d['price'],2)} ｜ RSI：{d['rsi']}
+📊 RR：{round(d['rr'],2)}
 
 📈 趨勢：{trend}
-⚡ 動能：{momentum}
 
-🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 止損：{round(d['stop'],2)}
-🎯 目標：{round(d['target'],2)}
-
-🧠 分析：{reason}
 👉 信號：{decision}
-{action}
 
 ━━━━━━━━━━━━━━
 """
-
     return msg
-    
-def market():
-    allow, msg = market_filter()
 
-    return f"""🌍【市場狀態 Market】
-
-{msg}
-
-📊 市場解讀：
-👉 {"🟢 偏多（可以找入場機會）" if allow else "🔴 偏弱（建議保守或減倉）"}
-
-⚡ 操作建議：
-• {"可重點留意 Entry / Breakout" if allow else "避免追高，優先保本"}
-• {"可正常交易" if allow else "降低倉位 / 暫停交易"}
-
-━━━━━━━━━━━━━━
-"""
-
-def gold():
-    return """🥇【黃金 Gold】
-
-📌 定位：
-👉 避險資產（Risk Hedge）
-
-📊 何時考慮：
-• 🔴 市場 Risk OFF
-• 📉 股市轉弱
-• 💸 通脹 / 不確定性上升
-
-⚡ 操作思路：
-• 唔係主力交易
-• 用作資產對沖
-
-💡 簡單理解：
-👉 市場差 → 黃金有機會升
-
-━━━━━━━━━━━━━━
-"""
-
-def long_term():
-    return """📈【長線投資 Long Term】
-
-💰 核心策略：
-👉 定期投資（DCA）
-
-📊 建議標的：
-• S&P500（大盤）
-• TSLA / NVDA（龍頭科技）
-
-⏳ 投資週期：
-👉 3 – 5 年以上
-
-⚡ 操作重點：
-• 唔 timing（唔估高低）
-• 每月固定投入
-• 長期持有
-
-🚫 常見錯誤：
-• 短線思維玩長線
-• 跌就驚 / 升就追
-
-💡 核心一句：
-👉 時間 > timing
-
-━━━━━━━━━━━━━━
-"""
 # ======================
 # SEND
 # ======================
@@ -308,15 +203,13 @@ def send(chat_id, msg):
         print("SEND ERROR:", e)
 
 # ======================
-# LOOP（核心）
+# LOOP
 # ======================
 def loop():
     while True:
         try:
             now = time.time()
             allow_trade, market_msg = market_filter()
-
-            candidates = []
 
             for s in SYMBOLS:
                 df = get_df(s,"5m")
@@ -330,62 +223,42 @@ def loop():
                 sig = signal_engine(df, d)
                 decision = sig["decision"]
 
-                # 市場過濾
-                if not allow_trade:
-                    if "Entry" in decision:
-                        decision = "❌ 禁止入場（市場弱）"
-                    elif "Breakout" in decision:
-                        decision = "⚠️ 假突破（市場弱）"
-
-                # 評分
-                score = d["rr"]
-                if "Entry" in decision:
-                    score += 1
-                if "Breakout" in decision:
-                    score += 1.5
-                if d["macd_up"]:
-                    score += 0.5
-                if sig["volume_spike"]:
-                    score += 0.5
-
-                if score > 2:
-                    candidates.append((s, d, score, decision))
-
-                # Setup
-                if "Setup" in decision:
+                # 👀 SETUP
+                if decision == "SETUP":
                     if now - last_alert.get(s+"_setup",0) > 1800:
-                        send(CHAT_ID,f"👀【Setup】{s}")
+                        send(CHAT_ID, f"""👀【SETUP】{s}
+
+💰 現價：{round(d['price'],2)}
+🎯 入場區：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+
+👉 等待入場
+""")
                         last_alert[s+"_setup"] = now
 
-                # Entry
-                if "Entry" in decision:
+                # 🟢 ENTRY
+                if decision == "ENTRY" and allow_trade:
                     if now - last_alert.get(s+"_entry",0) > 1800:
-                        send(CHAT_ID,f"🟢【入場】{s}")
+                        send(CHAT_ID, f"""🟢【ENTRY】{s}
+
+💰 價格：{round(d['price'],2)}
+🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+🛑 止損：{round(d['stop'],2)}
+
+📊 RR：{round(d['rr'],2)}
+""")
                         last_alert[s+"_entry"] = now
 
-                # Risk Off
-                if "Risk Off" in decision:
+                # 🔴 RISK OFF
+                if decision == "RISK":
                     if now - last_alert.get(s+"_risk",0) > 1800:
-                        send(CHAT_ID,f"🔴【Risk Off】{s}")
+                        send(CHAT_ID, f"""🔴【RISK OFF】{s}
+
+💰 現價：{round(d['price'],2)}
+
+👉 趨勢轉弱
+👉 避免入場
+""")
                         last_alert[s+"_risk"] = now
-
-            # Top signals
-            if candidates:
-                top = sorted(candidates,key=lambda x:x[2],reverse=True)[:2]
-                msg = f"🚀【高質信號】\n{market_msg}\n\n"
-
-                for s,d,score,decision in top:
-                    grade = "C"
-                    if score > 3:
-                        grade = "A"
-                    elif score > 2.5:
-                        grade = "B"
-
-                    if now - last_alert.get(s,0) > 600:
-                        msg += f"📈 {s} ｜ 等級 {grade}\n👉 {decision}\n\n"
-                        last_alert[s] = now
-
-                send(CHAT_ID,msg)
 
             time.sleep(300)
 
@@ -419,27 +292,16 @@ def webhook():
     text = message.get("text","").lower()
 
     if text.startswith("/start"):
-        send(chat_id, """🚀【交易 Bot 已啟動】
+        send(chat_id,"""🚀 Bot 已啟動
 
-📊 /stock → 市場掃描
-🌍 /market → 市場方向
-🥇 /gold → 避險分析
-📈 /long → 長線策略
-
-━━━━━━━━━━━━━━
+📊 /stock
+🌍 /market
+🥇 /gold
+📈 /long
 """)
 
     elif text.startswith("/stock"):
         send(chat_id, stock_all())
-
-    elif text.startswith("/market"):
-        send(chat_id, market())
-
-    elif text.startswith("/gold"):
-        send(chat_id, gold())
-
-    elif text.startswith("/long"):
-        send(chat_id, long_term())
 
     return "ok"
 
@@ -447,8 +309,5 @@ def webhook():
 def home():
     return "running"
 
-
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
-
-
