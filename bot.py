@@ -121,31 +121,51 @@ def calc(df):
 # COMMAND
 # ======================
 def stock_all():
-    msg = "📊【市場掃描】\n\n"
+    msg = "📊【Stock Scanner｜美股掃描】\n\n"
 
     for s in SYMBOLS:
         df = get_df(s,"5m")
         if not df:
+            msg += f"⚠️ {s} Data Error\n\n"
             continue
 
         d = calc(df)
         if not d:
+            msg += f"⚠️ {s} Calc Error\n\n"
             continue
 
-        zone = "🟡 Watch"
+        # ===== SIGNAL LOGIC（升級版）=====
+        setup = "Range"
+        if d["trend_up"]:
+            setup = "Pullback (Uptrend)"
+        else:
+            setup = "Weak Structure"
+
+        # entry 判斷
         if d["entry_low"] <= d["price"] <= d["entry_high"]:
-            zone = "🟢 Entry Zone"
+            decision = "🟢 ENTER"
+        elif d["price"] < d["entry_low"]:
+            decision = "🟡 WAIT"
+        else:
+            decision = "⚠️ EXTENDED"
 
-        msg += f"""📌 {s}
-💰 {round(d['price'],2)} ｜ RSI {d['rsi']}
-Trend: {"Up" if d['trend_up'] else "Down"}
+        # momentum
+        momentum = "Strong" if d["macd_up"] else "Weak"
 
+        msg += f"""📌 {s} — Intraday
+
+💰 Price: {round(d['price'],2)}
+📈 Trend: {"Uptrend" if d['trend_up'] else "Downtrend"}
+⚡ Momentum: {momentum}
+
+🧠 Setup: {setup}
 🎯 Entry: {round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 Stop: {round(d['stop'],2)}
-🎯 Target: {round(d['target'],2)}
-📊 RR: {round(d['rr'],2)}
+🛑 Risk Off: {round(d['stop'],2)}
+🚀 Target: {round(d['target'],2)}
 
-{zone}
+📊 R/R: {round(d['rr'],2)}
+
+{decision}
 ━━━━━━━━━━━━━━
 """
 
