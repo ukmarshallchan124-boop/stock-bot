@@ -17,7 +17,7 @@ CACHE_TTL = 120
 
 
 # ======================
-# DATA
+# DATA（加強穩定）
 # ======================
 def get_df(symbol, interval):
     key = f"{symbol}_{interval}"
@@ -34,14 +34,26 @@ def get_df(symbol, interval):
         if df is None or df.empty or len(df) < 50:
             return None
 
+        # 防舊數據
+        last_time = df.index[-1].to_pydatetime().timestamp()
+        if time.time() - last_time > 900:
+            return None
+
         cache[key] = (df.copy(), now)
+
+        # 防 memory leak
+        if len(cache) > 60:
+            oldest = min(cache.items(), key=lambda x: x[1][1])[0]
+            del cache[oldest]
+
         return df
-    except:
+    except Exception as e:
+        print("DATA ERROR:", e)
         return None
 
 
 # ======================
-# SEND
+# SEND（防空 + 防錯）
 # ======================
 def send(chat_id, msg):
     if not chat_id or not msg or not msg.strip():
@@ -52,58 +64,63 @@ def send(chat_id, msg):
             json={"chat_id": chat_id, "text": msg[:4000]},
             timeout=10
         )
-    except:
-        pass
+    except Exception as e:
+        print("SEND ERROR:", e)
 
 
 # ======================
-# CALC（核心）
+# CALC（防 crash）
 # ======================
 def calc(df):
-    price = float(df["Close"].iloc[-1])
+    try:
+        price = float(df["Close"].iloc[-1])
 
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
+        delta = df["Close"].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
 
-    gain_ema = gain.ewm(alpha=1/14).mean()
-    loss_ema = loss.ewm(alpha=1/14).mean()
+        gain_ema = gain.ewm(alpha=1/14).mean()
+        loss_ema = loss.ewm(alpha=1/14).mean()
 
-    rs = gain_ema / (loss_ema + 1e-10)
-    rsi = round((100 - (100 / (1 + rs))).iloc[-1],1)
+        rs = gain_ema / (loss_ema + 1e-10)
+        rsi = round((100 - (100 / (1 + rs))).iloc[-1],1)
 
-    ema12 = df["Close"].ewm(span=12).mean()
-    ema26 = df["Close"].ewm(span=26).mean()
-    macd_up = (ema12 - ema26).iloc[-1] > (ema12 - ema26).ewm(span=9).mean().iloc[-1]
+        ema12 = df["Close"].ewm(span=12).mean()
+        ema26 = df["Close"].ewm(span=26).mean()
+        macd_up = (ema12 - ema26).iloc[-1] > (ema12 - ema26).ewm(span=9).mean().iloc[-1]
 
-    ma20 = df["Close"].rolling(20).mean().iloc[-1]
-    trend_up = price > ma20
+        ma20 = df["Close"].rolling(20).mean().iloc[-1]
+        trend_up = price > ma20
 
-    high = float(df["High"].max())
-    low = float(df["Low"].min())
+        high = float(df["High"].max())
+        low = float(df["Low"].min())
 
-    entry_low = low * 1.01
-    entry_high = low * 1.03
-    stop = low * 0.97
-    target = high * 1.02
+        entry_low = low * 1.01
+        entry_high = low * 1.03
+        stop = low * 0.97
+        target = high * 1.02
 
-    rr = (target - entry_low) / (entry_low - stop) if entry_low > stop else 0
+        rr = (target - entry_low) / (entry_low - stop) if entry_low > stop else 0
 
-    return {
-        "price": price,
-        "rsi": rsi,
-        "macd_up": macd_up,
-        "trend_up": trend_up,
-        "entry_low": entry_low,
-        "entry_high": entry_high,
-        "stop": stop,
-        "target": target,
-        "rr": rr
-    }
+        return {
+            "price": price,
+            "rsi": rsi,
+            "macd_up": macd_up,
+            "trend_up": trend_up,
+            "entry_low": entry_low,
+            "entry_high": entry_high,
+            "stop": stop,
+            "target": target,
+            "rr": rr
+        }
+
+    except Exception as e:
+        print("CALC ERROR:", e)
+        return None
 
 
 # ======================
-# COMMAND（分析腦🔥）
+# COMMAND（保持你原本 UI）
 # ======================
 def stock_all():
     msg = "📊【市場掃描】\n\n"
@@ -114,6 +131,8 @@ def stock_all():
             continue
 
         d = calc(df)
+        if not d:
+            continue
 
         zone = "🟡 Watch"
         if d["entry_low"] <= d["price"] <= d["entry_high"]:
@@ -141,6 +160,8 @@ def market():
         return "⚠️ 市場數據錯誤"
 
     d = calc(df)
+    if not d:
+        return "⚠️ 市場計算錯誤"
 
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     ma5 = df["Close"].rolling(5).mean().iloc[-1]
@@ -178,6 +199,8 @@ def gold():
         return "Gold 無數據"
 
     d = calc(df)
+    if not d:
+        return "Gold 計算錯誤"
 
     return f"""🥇【Gold 分析】
 
@@ -202,7 +225,7 @@ def long_term():
 
 
 # ======================
-# SIGNAL ENGINE（交易腦🔥）
+# SIGNAL ENGINE（修復版🔥）
 # ======================
 def loop():
     while True:
@@ -210,7 +233,7 @@ def loop():
             now = time.time()
             candidates = []
 
-            # ===== 市場判斷（15m）=====
+            # ===== 市場判斷 =====
             spy = get_df("SPY","15m")
             if spy:
                 ma20 = spy["Close"].rolling(20).mean().iloc[-1]
@@ -228,8 +251,15 @@ def loop():
                     continue
 
                 d = calc(df)
+                if not d:
+                    continue
 
                 recent_high = df["High"].iloc[-15:-3].max()
+                recent_low = df["Low"].iloc[-15:-3].min()
+
+                # 🔥 防假 breakout（range filter）
+                if (recent_high - recent_low) / d["price"] < 0.01:
+                    continue
 
                 breakout = (
                     df["Close"].iloc[-1] > recent_high and
@@ -239,6 +269,10 @@ def loop():
 
                 vol = df["Volume"]
                 vol_ma = vol.rolling(10).mean().iloc[-1]
+
+                if math.isnan(vol_ma) or vol_ma == 0:
+                    continue
+
                 volume_spike = vol.iloc[-1] > vol_ma * 1.5
 
                 # ===== Setup =====
@@ -284,31 +318,26 @@ def loop():
 
                     candidates.append((s,d,score,grade))
 
-            # ===== Top Signals =====
+            # ===== Top Signals（防空訊息）=====
             if candidates:
                 top = sorted(candidates,key=lambda x:x[2],reverse=True)[:3]
 
-                msg = "🚀【Top Signals】\n\n"
+                lines = []
 
                 for s,d,score,grade in top:
                     if now - last_alert.get(s,0) > 600:
-                        msg += f"""📈 {s} ｜ Grade {grade}
-
-📊 條件：
-• Breakout + Volume + Trend
+                        lines.append(f"""📈 {s} ｜ Grade {grade}
 
 🎯 Entry {round(d['entry_low'],2)}-{round(d['entry_high'],2)}
 🛑 Stop {round(d['stop'],2)}
 🎯 Target {round(d['target'],2)}
 
-📊 RR {round(d['rr'],2)}
-
-━━━━━━━━━━━━━━
-"""
+📊 RR {round(d['rr'],2)}""")
 
                         last_alert[s]=now
 
-                send(CHAT_ID,msg)
+                if lines:
+                    send(CHAT_ID,"🚀【Top Signals】\n\n" + "\n\n".join(lines))
 
             time.sleep(300)
 
@@ -318,14 +347,18 @@ def loop():
 
 
 # ======================
-# THREAD
+# THREAD（100%可用）
 # ======================
-if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    threading.Thread(target=loop,daemon=True).start()
+def start_background():
+    if not getattr(start_background, "started", False):
+        threading.Thread(target=loop, daemon=True).start()
+        start_background.started = True
+
+start_background()
 
 
 # ======================
-# WEBHOOK
+# WEBHOOK（group兼容）
 # ======================
 @app.route("/", methods=["POST"])
 def webhook():
@@ -337,19 +370,19 @@ def webhook():
     chat_id = data["message"]["chat"]["id"]
     text = data["message"].get("text","")
 
-    if text.startswith("/start"):
+    if "/start" in text:
         send(chat_id,"🚀 Bot Ready\n/stock /market /gold /long")
 
-    elif text.startswith("/stock"):
+    elif "/stock" in text:
         send(chat_id,stock_all())
 
-    elif text.startswith("/market"):
+    elif "/market" in text:
         send(chat_id,market())
 
-    elif text.startswith("/gold"):
+    elif "/gold" in text:
         send(chat_id,gold())
 
-    elif text.startswith("/long"):
+    elif "/long" in text:
         send(chat_id,long_term())
 
     return "ok"
