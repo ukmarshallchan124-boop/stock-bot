@@ -138,9 +138,10 @@ def calc(df):
         entry_low = low * 1.01
         entry_high = low * 1.03
         stop = low * 0.97
-        target = high * 1.02risk        
-        risk = entry_low - strr
-        rr = (target - entry_low) / risk if risk > 0 else 0
+        target = high * 1.02
+
+risk = entry_low - stop
+rr = (target - entry_low) / risk if risk > 0 else 0
         return {
             "price": price,
             "rsi": rsi,
