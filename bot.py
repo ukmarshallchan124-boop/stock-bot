@@ -242,7 +242,7 @@ def loop():
                 if decision == "SETUP":
                     if now - last_alert.get(s+"_setup",0) > 1800:
                         send(CHAT_ID, f"""👀【SETUP】{s}
-
+📈 趨勢：{"上升" if d['trend_up'] else "下降"}
 💰 {round(d['price'],2)}
 🎯 {round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 
