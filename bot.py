@@ -39,11 +39,13 @@ def get_df(symbol, interval):
             if time.time() - last_time > 900:
                 continue
 
+            # freeze
             if df["Close"].iloc[-3:].nunique() == 1 and df["Volume"].iloc[-3:].sum() == 0:
                 continue
 
             cache[key] = (df.copy(), now)
 
+            # remove oldest
             if len(cache) > 60:
                 oldest = min(cache.items(), key=lambda x: x[1][1])[0]
                 del cache[oldest]
@@ -61,7 +63,7 @@ def get_df(symbol, interval):
 # SEND
 # ======================
 def send(chat_id, msg):
-    if not chat_id:
+    if not chat_id or not msg.strip():
         return
     try:
         requests.post(
@@ -85,7 +87,7 @@ def calc(df):
         loss = -delta.clip(upper=0)
 
         gain_ema = gain.ewm(alpha=1/14, adjust=False).mean()
-        loss_ema = loss.ewm(alpha=1/14, adjust=False).mean()
+        loss_ema = loss_ema = loss.ewm(alpha=1/14, adjust=False).mean()
 
         rs = gain_ema / (loss_ema + 1e-10)
         rsi = (100 - (100 / (1 + rs))).iloc[-1]
@@ -145,14 +147,13 @@ def stock_all():
             msg += f"{s} ⚠️ 計算錯誤\n\n"
             continue
 
-        status = "👉 可觀察"
+        status = "👉 觀察"
         if d["entry_low"] <= d["price"] <= d["entry_high"]:
-            status = "👉 接近入場區"
+            status = "👉 接近入場"
 
         msg += f"""{s}
 💰 {round(d['price'],2)}
 RSI: {d['rsi']}
-
 🎯 {round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 RR: {round(d['rr'],2)}
 
@@ -167,62 +168,34 @@ def market():
     if not df:
         return "市場數據不可用"
 
-    d = calc(df)
-    if not d:
-        return "市場錯誤"
-
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     ma5 = df["Close"].rolling(5).mean().iloc[-1]
 
-    if ma5 < ma20:
-        action = "🚨 Downtrend → 停 trade"
+    if math.isnan(ma20) or math.isnan(ma5):
+        return "市場數據不足"
+
+    strength = abs(ma5 - ma20) / ma20
+
+    if strength < 0.002:
+        action = "⚠️ Sideways → 等機會"
+    elif ma5 < ma20:
+        action = "🔻 Downtrend → 小心做"
     else:
         action = "🟢 Uptrend → 可操作"
 
-    return f"""
-🌍市場
-
-SPY: {round(d['price'],2)}
-RSI: {d['rsi']}
-
-{action}
-"""
+    return f"🌍市場\nSPY\n{action}"
 
 
 def gold():
-    df = get_df("GLD","60m")
-    if not df:
-        return "Gold 無數據"
-
-    d = calc(df)
-    if not d:
-        return "Gold 錯誤"
-
-    return f"""
-🥇Gold
-
-Price: {round(d['price'],2)}
-RSI: {d['rsi']}
-
-👉 對沖資產
-"""
+    return "🥇 Gold → 對沖資產"
 
 
 def long_term():
-    return """
-📈【長線配置】
-
-👉 45% S&P500
-👉 25% VWRA
-👉 20% MSFT
-👉 10% Gold
-
-👉 每月 DCA
-"""
+    return "📈 長線\nS&P500 / MSFT / ETF DCA"
 
 
 # ======================
-# LOOP（Signal Engine）
+# LOOP
 # ======================
 def loop():
     while True:
@@ -230,18 +203,32 @@ def loop():
             now = time.time()
             candidates = []
 
+            # 市場 regime
             spy = get_df("SPY","5m")
+            allow_trade = True
+
             if spy:
                 ma20 = spy["Close"].rolling(20).mean().iloc[-1]
                 ma5 = spy["Close"].rolling(5).mean().iloc[-1]
 
-                if ma5 < ma20:
-                    if now - last_alert.get("risk",0) > 1800:
-                        send(CHAT_ID,"🚨市場轉弱 → 停trade")
-                        last_alert["risk"] = now
-                    time.sleep(300)
-                    continue
+                if not math.isnan(ma20) and not math.isnan(ma5):
+                    strength = abs(ma5 - ma20) / ma20
 
+                    if strength < 0.002:
+                        allow_trade = False
+
+                    elif ma5 < ma20:
+                        allow_trade = True  # 🔥 不再完全禁止
+
+                        if now - last_alert.get("risk",0) > 1800:
+                            send(CHAT_ID,"⚠️ 市場轉弱（小心）")
+                            last_alert["risk"] = now
+
+            if not allow_trade:
+                time.sleep(300)
+                continue
+
+            # 掃描
             for s in SYMBOLS:
                 df = get_df(s,"5m")
                 if not df:
@@ -251,18 +238,31 @@ def loop():
                 if not d:
                     continue
 
+                # breakout（強化）
                 recent_high = df["High"].iloc[-15:-3].max()
+                recent_low = df["Low"].iloc[-15:-3].min()
+
+                # 避免死市
+                if (recent_high - recent_low) / d["price"] < 0.01:
+                    continue
 
                 breakout = (
                     df["Close"].iloc[-1] > recent_high and
-                    df["Close"].iloc[-2] <= recent_high
+                    df["Close"].iloc[-2] <= recent_high and
+                    df["Low"].iloc[-1] > recent_high * 0.998
                 )
 
+                # volume
                 vol_ma = df["Volume"].rolling(10).mean().iloc[-1]
-                if math.isnan(vol_ma) or vol_ma == 0:
+                vol_max = df["Volume"].rolling(20).max().iloc[-2]
+
+                if math.isnan(vol_ma) or math.isnan(vol_max) or vol_ma == 0:
                     continue
 
-                volume_spike = df["Volume"].iloc[-1] > vol_ma * 1.5
+                volume_spike = (
+                    df["Volume"].iloc[-1] > vol_ma * 1.5 and
+                    df["Volume"].iloc[-1] > vol_max * 0.8
+                )
 
                 # Setup
                 if (
@@ -288,16 +288,19 @@ def loop():
 
                     candidates.append((s,d,score))
 
+            # 發送 top signals（修復空訊息）
             if candidates:
                 top = sorted(candidates,key=lambda x:x[2],reverse=True)[:3]
 
-                msg = "🚀【Top Signals】\n\n"
+                lines = []
+
                 for s,d,score in top:
                     if now - last_alert.get(s,0) > 600:
-                        msg += f"{s}\nRSI:{d['rsi']} RR:{round(d['rr'],2)}\n\n"
+                        lines.append(f"{s}\nRSI:{d['rsi']} RR:{round(d['rr'],2)}")
                         last_alert[s] = now
 
-                send(CHAT_ID,msg)
+                if lines:
+                    send(CHAT_ID,"🚀【Top Signals】\n\n" + "\n\n".join(lines))
 
             time.sleep(300)
 
@@ -307,13 +310,12 @@ def loop():
 
 
 # ======================
-# THREAD（安全）
+# THREAD（修復）
 # ======================
 def start_background():
-    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-        if not getattr(start_background, "started", False):
-            threading.Thread(target=loop, daemon=True).start()
-            start_background.started = True
+    if not getattr(start_background, "started", False):
+        threading.Thread(target=loop, daemon=True).start()
+        start_background.started = True
 
 start_background()
 
