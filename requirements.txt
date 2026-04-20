@@ -1,7 +1,4 @@
-python-telegram-bot
-yfinance
-pandas
-ta
-requests
 flask
+requests
+yfinance
 pandas
