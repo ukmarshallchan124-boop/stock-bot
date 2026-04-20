@@ -1,7 +1,6 @@
 from flask import Flask, request
 import requests, os, time, threading
 import yfinance as yf
-import math
 
 app = Flask(__name__)
 
@@ -15,9 +14,69 @@ last_alert = {}
 cache = {}
 CACHE_TTL = 120
 
+# ======================
+# SIGNAL ENGINE
+# ======================
+def signal_engine(df, d):
+    price = d["price"]
+
+    recent_high = df["High"].iloc[-20:-3].max()
+    recent_low = df["Low"].iloc[-20:-3].min()
+
+    vol = df["Volume"]
+    vol_ma = vol.rolling(10).mean().iloc[-1]
+    volume_spike = vol.iloc[-1] > vol_ma * 1.5
+
+    breakout = (
+        df["Close"].iloc[-1] > recent_high and
+        df["Close"].iloc[-2] > recent_high
+    )
+
+    in_entry = d["entry_low"] <= price <= d["entry_high"]
+    near_entry = d["entry_low"]*0.999 < price < d["entry_high"]*1.001
+    risk_off = price < recent_low
+
+    good_rr = d["rr"] > 1.5
+    good_rsi = 52 < d["rsi"] < 65
+
+    if risk_off:
+        decision = "🔴 Risk Off（跌穿結構）"
+
+    elif breakout and volume_spike and d["trend_up"] and good_rr and d["rsi"] < 70:
+        decision = "🚀 Breakout（突破 + 放量）"
+
+    elif in_entry and d["trend_up"] and good_rsi and good_rr:
+        decision = "🟢 Entry（回調入場）"
+
+    elif near_entry:
+        decision = "👀 Setup（接近入場）"
+
+    else:
+        decision = "🟡 觀望"
+
+    return {
+        "decision": decision,
+        "volume_spike": volume_spike
+    }
 
 # ======================
-# DATA（穩定 + cache）
+# MARKET FILTER
+# ======================
+def market_filter():
+    df = get_df("SPY","15m")
+    if not df:
+        return True, "⚠️ 無法判斷市場"
+
+    ma20 = df["Close"].rolling(20).mean().iloc[-1]
+    ma5 = df["Close"].rolling(5).mean().iloc[-1]
+
+    if ma5 < ma20:
+        return False, "🔴 Risk OFF（市場轉弱）"
+    else:
+        return True, "🟢 Risk ON（市場健康）"
+
+# ======================
+# DATA
 # ======================
 def get_df(symbol, interval):
     key = f"{symbol}_{interval}"
@@ -30,42 +89,15 @@ def get_df(symbol, interval):
 
     try:
         df = yf.Ticker(symbol).history(period="2d", interval=interval)
-
         if df is None or df.empty or len(df) < 50:
             return None
 
-        last_time = df.index[-1].to_pydatetime().timestamp()
-        if time.time() - last_time > 900:
-            return None
-
         cache[key] = (df.copy(), now)
-
-        if len(cache) > 60:
-            oldest = min(cache.items(), key=lambda x: x[1][1])[0]
-            del cache[oldest]
-
         return df
 
     except Exception as e:
         print("DATA ERROR:", e)
         return None
-
-
-# ======================
-# SEND
-# ======================
-def send(chat_id, msg):
-    if not chat_id or not msg or not msg.strip():
-        return
-    try:
-        requests.post(
-            f"{URL}/sendMessage",
-            json={"chat_id": chat_id, "text": msg[:4000]},
-            timeout=10
-        )
-    except Exception as e:
-        print("SEND ERROR:", e)
-
 
 # ======================
 # CALC
@@ -116,16 +148,16 @@ def calc(df):
     except Exception as e:
         print("CALC ERROR:", e)
         return None
-
-
 # ======================
-# 分析腦（UI）
+# UI FUNCTIONS
 # ======================
+
 def stock_all():
-    msg = "📊【市場掃描】\n\n"
+    allow, market_msg = market_filter()
+    msg = f"📊【市場掃描 Pro】\n{market_msg}\n\n"
 
-    for s in SYMBOLS:
-        df = get_df(s,"5m")
+    for s in SYMBOLS[:3]:  # 最多3隻
+        df = get_df(s, "5m")
         if not df:
             continue
 
@@ -133,74 +165,158 @@ def stock_all():
         if not d:
             continue
 
-        zone = "🟡 Watch"
-        if d["entry_low"] <= d["price"] <= d["entry_high"]:
-            zone = "🟢 Entry Zone"
+        sig = signal_engine(df, d)
+        decision = sig["decision"]
 
-        msg += f"""📌 {s}
-💰 {round(d['price'],2)} ｜ RSI {d['rsi']}
-Trend: {"Up" if d['trend_up'] else "Down"}
+        # ⭐ 評分
+        score = d["rr"]
+        if "Entry" in decision:
+            score += 1
+        if "Breakout" in decision:
+            score += 1.5
+        if d["macd_up"]:
+            score += 0.5
 
-🎯 Entry {round(d['entry_low'],2)}-{round(d['entry_high'],2)}
-🛑 Stop {round(d['stop'],2)}
-🎯 Target {round(d['target'],2)}
-📊 RR {round(d['rr'],2)}
+        # 等級
+        grade = "C"
+        if score > 3:
+            grade = "A"
+        elif score > 2.5:
+            grade = "B"
 
-📌 策略：
-👉 {"可考慮入場" if zone=="🟢 Entry Zone" else "等待確認"}
+        # 🎯 操作建議
+        if "Entry" in decision:
+            action = "👉 可考慮入場"
+        elif "Breakout" in decision:
+            action = "👉 留意突破跟進"
+        elif "Risk Off" in decision:
+            action = "👉 避免交易"
+        else:
+            action = "👉 等待機會"
 
-{zone}
+        # 📊 趨勢
+        trend = "🟢 上升" if d["trend_up"] else "🔻 下降"
+        momentum = "強" if d["macd_up"] else "弱"
+
+        # 🧠 分析
+        if "Entry" in decision:
+            reason = "回調支撐 + 上升趨勢"
+        elif "Breakout" in decision:
+            reason = "突破前高 + 成交量"
+        elif "Risk Off" in decision:
+            reason = "跌穿結構"
+        else:
+            reason = "未有明確優勢"
+
+        msg += f"""📈 {s} ｜ ⭐ {grade}
+
+💰 價格：{round(d['price'],2)}
+📊 RSI：{d['rsi']} ｜ RR：{round(d['rr'],2)}
+
+📈 趨勢：{trend}
+⚡ 動能：{momentum}
+
+🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+🛑 止損：{round(d['stop'],2)}
+🎯 目標：{round(d['target'],2)}
+
+🧠 分析：{reason}
+👉 信號：{decision}
+{action}
+
 ━━━━━━━━━━━━━━
 """
-    return msg or "⚠️ 無數據"
 
-
+    return msg
+    
 def market():
-    df = get_df("SPY","15m")
-    if not df:
-        return "⚠️ 市場數據錯誤"
+    allow, msg = market_filter()
 
-    ma20 = df["Close"].rolling(20).mean().iloc[-1]
-    ma5 = df["Close"].rolling(5).mean().iloc[-1]
+    return f"""🌍【市場狀態 Market】
 
-    if ma5 < ma20:
-        state = "🔻 Downtrend"
-    else:
-        state = "🟢 Uptrend"
+{msg}
 
-    return f"🌍 市場狀態\n{state}"
+📊 市場解讀：
+👉 {"🟢 偏多（可以找入場機會）" if allow else "🔴 偏弱（建議保守或減倉）"}
 
+⚡ 操作建議：
+• {"可重點留意 Entry / Breakout" if allow else "避免追高，優先保本"}
+• {"可正常交易" if allow else "降低倉位 / 暫停交易"}
+
+━━━━━━━━━━━━━━
+"""
 
 def gold():
-    return "🥇 Gold → Hedge"
+    return """🥇【黃金 Gold】
 
+📌 定位：
+👉 避險資產（Risk Hedge）
+
+📊 何時考慮：
+• 🔴 市場 Risk OFF
+• 📉 股市轉弱
+• 💸 通脹 / 不確定性上升
+
+⚡ 操作思路：
+• 唔係主力交易
+• 用作資產對沖
+
+💡 簡單理解：
+👉 市場差 → 黃金有機會升
+
+━━━━━━━━━━━━━━
+"""
 
 def long_term():
-    return "📈 長線 DCA"
+    return """📈【長線投資 Long Term】
 
+💰 核心策略：
+👉 定期投資（DCA）
+
+📊 建議標的：
+• S&P500（大盤）
+• TSLA / NVDA（龍頭科技）
+
+⏳ 投資週期：
+👉 3 – 5 年以上
+
+⚡ 操作重點：
+• 唔 timing（唔估高低）
+• 每月固定投入
+• 長期持有
+
+🚫 常見錯誤：
+• 短線思維玩長線
+• 跌就驚 / 升就追
+
+💡 核心一句：
+👉 時間 > timing
+
+━━━━━━━━━━━━━━
+"""
+# ======================
+# SEND
+# ======================
+def send(chat_id, msg):
+    try:
+        requests.post(
+            f"{URL}/sendMessage",
+            json={"chat_id": chat_id, "text": msg[:4000]},
+            timeout=10
+        )
+    except Exception as e:
+        print("SEND ERROR:", e)
 
 # ======================
-# 交易腦（Signal Engine）
+# LOOP（核心）
 # ======================
 def loop():
     while True:
         try:
             now = time.time()
+            allow_trade, market_msg = market_filter()
+
             candidates = []
-
-            spy = get_df("SPY","15m")
-            allow_trade = True
-
-            if spy:
-                ma20 = spy["Close"].rolling(20).mean().iloc[-1]
-                ma5 = spy["Close"].rolling(5).mean().iloc[-1]
-
-                if ma5 < ma20:
-                    allow_trade = False
-
-                    if now - last_alert.get("risk",0) > 1800:
-                        send(CHAT_ID,"🚨【Risk Off】市場轉弱 → 減倉")
-                        last_alert["risk"] = now
 
             for s in SYMBOLS:
                 df = get_df(s,"5m")
@@ -211,64 +327,62 @@ def loop():
                 if not d:
                     continue
 
-                recent_high = df["High"].iloc[-15:-3].max()
+                sig = signal_engine(df, d)
+                decision = sig["decision"]
 
-                breakout = (
-                    df["Close"].iloc[-1] > recent_high and
-                    df["Close"].iloc[-2] > recent_high
-                )
+                # 市場過濾
+                if not allow_trade:
+                    if "Entry" in decision:
+                        decision = "❌ 禁止入場（市場弱）"
+                    elif "Breakout" in decision:
+                        decision = "⚠️ 假突破（市場弱）"
 
-                vol = df["Volume"]
-                vol_ma = vol.rolling(10).mean().iloc[-1]
-                volume_spike = vol.iloc[-1] > vol_ma * 1.5
+                # 評分
+                score = d["rr"]
+                if "Entry" in decision:
+                    score += 1
+                if "Breakout" in decision:
+                    score += 1.5
+                if d["macd_up"]:
+                    score += 0.5
+                if sig["volume_spike"]:
+                    score += 0.5
+
+                if score > 2:
+                    candidates.append((s, d, score, decision))
 
                 # Setup
-                if d["entry_low"]*0.995 < d["price"] < d["entry_high"]*1.005:
+                if "Setup" in decision:
                     if now - last_alert.get(s+"_setup",0) > 1800:
-                        send(CHAT_ID,f"👀【Setup】{s}\n接近入場區")
+                        send(CHAT_ID,f"👀【Setup】{s}")
                         last_alert[s+"_setup"] = now
 
-                # Breakout
-                if breakout and now - last_alert.get(s+"_bo",0) > 1800:
-                    send(CHAT_ID,f"📢【Breakout】{s}")
-                    last_alert[s+"_bo"] = now
-
                 # Entry
-                if (
-                    allow_trade
-                    and breakout
-                    and volume_spike
-                    and d["trend_up"]
-                    and 55 < d["rsi"] < 68
-                    and d["rr"] > 1.5
-                ):
-                    score = d["rr"]*2 + (70-abs(d["rsi"]-60))
+                if "Entry" in decision:
+                    if now - last_alert.get(s+"_entry",0) > 1800:
+                        send(CHAT_ID,f"🟢【入場】{s}")
+                        last_alert[s+"_entry"] = now
 
-                    grade = "C"
-                    if score > 10:
-                        grade="A"
-                    elif score > 7:
-                        grade="B"
+                # Risk Off
+                if "Risk Off" in decision:
+                    if now - last_alert.get(s+"_risk",0) > 1800:
+                        send(CHAT_ID,f"🔴【Risk Off】{s}")
+                        last_alert[s+"_risk"] = now
 
-                    candidates.append((s,d,score,grade))
-
+            # Top signals
             if candidates:
-                top = sorted(candidates,key=lambda x:x[2],reverse=True)[:3]
+                top = sorted(candidates,key=lambda x:x[2],reverse=True)[:2]
+                msg = f"🚀【高質信號】\n{market_msg}\n\n"
 
-                msg = "🚀【Top Signals】\n\n"
+                for s,d,score,decision in top:
+                    grade = "C"
+                    if score > 3:
+                        grade = "A"
+                    elif score > 2.5:
+                        grade = "B"
 
-                for s,d,score,grade in top:
                     if now - last_alert.get(s,0) > 600:
-                        msg += f"""📈 {s} ｜ Grade {grade}
-
-🎯 Entry {round(d['entry_low'],2)}-{round(d['entry_high'],2)}
-🛑 Stop {round(d['stop'],2)}
-🎯 Target {round(d['target'],2)}
-
-📊 RR {round(d['rr'],2)}
-
-━━━━━━━━━━━━━━
-"""
+                        msg += f"📈 {s} ｜ 等級 {grade}\n👉 {decision}\n\n"
                         last_alert[s] = now
 
                 send(CHAT_ID,msg)
@@ -276,55 +390,58 @@ def loop():
             time.sleep(300)
 
         except Exception as e:
-            print("ERROR:", e)
+            print("LOOP ERROR:", e)
             time.sleep(10)
 
-
 # ======================
-# THREAD
+# START
 # ======================
 def start_background():
-    if not getattr(start_background, "started", False):
-        threading.Thread(target=loop, daemon=True).start()
-        start_background.started = True
+    threading.Thread(target=loop, daemon=True).start()
 
 start_background()
-
 
 # ======================
 # WEBHOOK
 # ======================
 @app.route("/", methods=["POST"])
 def webhook():
-    data = request.get_json(silent=True)
+    data = request.get_json()
 
     if not data:
         return "ok"
 
-    message = data.get("message") or data.get("edited_message") or data.get("channel_post")
+    message = data.get("message")
     if not message:
         return "ok"
 
     chat_id = message["chat"]["id"]
     text = message.get("text","").lower()
 
-    if "/start" in text:
-        send(chat_id,"🚀 Bot Ready\n/stock /market /gold /long")
+    if text.startswith("/start"):
+        send(chat_id, """🚀【交易 Bot 已啟動】
 
-    elif "/stock" in text:
-        send(chat_id,stock_all())
+📊 /stock → 市場掃描
+🌍 /market → 市場方向
+🥇 /gold → 避險分析
+📈 /long → 長線策略
 
-    elif "/market" in text:
-        send(chat_id,market())
+━━━━━━━━━━━━━━
+""")
 
-    elif "/gold" in text:
-        send(chat_id,gold())
+    elif text.startswith("/stock"):
+        send(chat_id, stock_all())
 
-    elif "/long" in text:
-        send(chat_id,long_term())
+    elif text.startswith("/market"):
+        send(chat_id, market())
+
+    elif text.startswith("/gold"):
+        send(chat_id, gold())
+
+    elif text.startswith("/long"):
+        send(chat_id, long_term())
 
     return "ok"
-
 
 @app.route("/")
 def home():
@@ -332,4 +449,6 @@ def home():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
+    app.run(host="0.0.0.0", port=10000)
+
+
