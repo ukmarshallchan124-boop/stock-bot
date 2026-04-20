@@ -14,7 +14,60 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 last_alert = {}
 cache = {}
 CACHE_TTL = 120
+# ======================
+# Signal Engine
+# ======================
+def signal_engine(df, d):
+    try:
+        price = d["price"]
 
+        # === 結構（Structure）
+        recent_high = df["High"].iloc[-20:-3].max()
+        recent_low = df["Low"].iloc[-20:-3].min()
+
+        # === Setup 判斷
+        if d["trend_up"]:
+            setup = "Pullback (Bullish)"
+        else:
+            setup = "Weak / Range"
+
+        # === Entry 區
+        entry_low = d["entry_low"]
+        entry_high = d["entry_high"]
+
+        in_entry = entry_low <= price <= entry_high
+
+        # === Breakout
+        breakout = (
+            df["Close"].iloc[-1] > recent_high and
+            df["Close"].iloc[-2] > recent_high
+        )
+
+        # === Risk Off（跌穿結構）
+        risk_off = price < recent_low
+
+        # === Decision（最重要）
+        if breakout:
+            decision = "🚀 BREAKOUT"
+        elif in_entry:
+            decision = "🟢 ENTRY"
+        elif risk_off:
+            decision = "🔴 RISK OFF"
+        else:
+            decision = "🟡 WAIT"
+
+        return {
+            "setup": setup,
+            "entry_low": entry_low,
+            "entry_high": entry_high,
+            "breakout": round(recent_high,2),
+            "risk_off": round(recent_low,2),
+            "decision": decision
+        }
+
+    except Exception as e:
+        print("SIGNAL ERROR:", e)
+        return None
 
 # ======================
 # DATA
