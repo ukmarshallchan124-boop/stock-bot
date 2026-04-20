@@ -412,20 +412,24 @@ start_background()
 # ======================
 @app.route("/", methods=["POST"])
 def webhook():
-    data = request.get_json()
+    try:
+        data = request.get_json()
+        print("INCOMING:", data)
 
-    if not data:
-        return "ok"
+        if not data:
+            return "ok"
 
-    message = data.get("message")
-    if not message:
-        return "ok"
+        message = data.get("message")
+        if not message:
+            return "ok"
 
-    chat_id = message["chat"]["id"]
-    text = message.get("text","").lower()
+        chat_id = message["chat"]["id"]
+        text = message.get("text", "").lower().strip()
 
-    if text.startswith("/start"):
-        send(chat_id,"""🚀 Bot 已啟動
+        print("TEXT:", text)
+
+        if text == "/start":
+            send(chat_id, """🚀 Bot 已啟動
 
 📊 /stock
 🌍 /market
@@ -433,10 +437,26 @@ def webhook():
 📈 /long
 """)
 
-    elif text.startswith("/stock"):
-        send(chat_id, stock_all())
+        elif text == "/stock":
+            send(chat_id, stock_all())
 
-    return "ok"
+        elif text == "/market":
+            send(chat_id, market())
+
+        elif text == "/gold":
+            send(chat_id, gold())
+
+        elif text == "/long":
+            send(chat_id, long_term())
+
+        else:
+            send(chat_id, "❓ 未知指令")
+
+        return "ok"
+
+    except Exception as e:
+        print("WEBHOOK ERROR:", e)
+        return "ok"
 
 @app.route("/")
 def home():
