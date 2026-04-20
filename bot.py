@@ -1,5 +1,5 @@
 from flask import Flask, request
-import loop time, threading
+import requests, os, time, threading
 import yfinance as yf
 
 app = Flask(__name__)
