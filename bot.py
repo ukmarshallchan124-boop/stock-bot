@@ -179,6 +179,9 @@ def calc(df):
     exec_target = mid_entry + (mid_entry - exec_stop) * 2
 
     exec_rr = (exec_target - mid_entry) / (mid_entry - exec_stop)
+    
+    risk = (mid_entry - exec_stop)
+    exec_rr = (exec_target - mid_entry) / risk if risk > 0 else 0
 
 
     # ======================
@@ -626,18 +629,28 @@ def loop():
             if now - last_alert.get(s+"_entry",0) > 1800:
                 send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
-        📈 {s}
-        💰 {round(d['price'],2)}
-        📊 RR：{round(d['rr'],2)}
+            📈 {s}
+            💰 價格：{round(d['price'],2)}
 
-        👉 信號：
-        {sig}
+            👉 信號：
+            {sig}
 
-        🧠 情緒：
-        {senti_text}
+            🎯 入場區：
+            {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-        📰 新聞：
-        {news}
+            🛑 止損：
+            {round(d['exec_stop'],2)}
+
+            🎯 目標：
+            {round(d['exec_target'],2)}
+
+            📊 RR：{round(d['rr'],2)}
+
+            🧠 情緒：
+            {senti_text}
+
+            📰 新聞：
+            {news}
 
 ━━━━━━━━━━
 """)
