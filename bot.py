@@ -285,7 +285,8 @@ def loop():
             # 🚀 TOP SIGNAL（🔥最重要）
             # ======================
             if candidates:
-                top = sorted(candidates, key=lambda x: x[2], reverse=True)[:1]
+                top = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
+                s, d, score, decision = top
 
                 msg = f"🚀【今日最強機會】\n{market_msg}\n\n"
 
