@@ -307,11 +307,9 @@ def loop():
 
                 send(CHAT_ID, msg)
 
-            time.sleep(300)
 
         except Exception as e:
             print("LOOP ERROR:", e)
-            time.sleep(10)
 # ======================
 # UI
 # ======================
