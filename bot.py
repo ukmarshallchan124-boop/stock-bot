@@ -496,11 +496,14 @@ def stock_all():
 💰 價格：{round(d['price'],2)}
 📊 RR：{round(d['rr'],2)} ｜ RSI {d['rsi']}
 
-🎯 Entry：
-{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+🎯 Entry（Zone）：
+{round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-🛑 Stop：{round(d['stop'],2)}
-🎯 Target：{round(d['target'],2)}
+🛑 Stop：
+{round(d['exec_stop'],2)}
+
+🎯 Target：
+{round(d['exec_target'],2)}
 
 👉 信號：
 {sig} {tags}
