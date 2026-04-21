@@ -525,9 +525,6 @@ def webhook():
         print("WEBHOOK ERROR:", e)
         return "ok"
 
-    except Exception as e:
-        print("WEBHOOK ERROR:", e)
-        return "ok"
 
 @app.route("/")
 def home():
