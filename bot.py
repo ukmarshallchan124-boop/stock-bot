@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-NEWS_API_KEY = "60e376f3c4c54b7198c941c3fb96600f"
+API_KEY = os.getenv("NEWS_API_KEY")
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
@@ -44,7 +44,7 @@ def get_yahoo_news(symbol):
 
 def get_newsapi_news(symbol):
     try:
-        API_KEY = os.getenv("NEWS_API_KEY")
+        API_KEY = NEWS_API_KEY
         if not API_KEY:
             return None
 
@@ -67,7 +67,42 @@ def get_newsapi_news(symbol):
     except Exception as e:
         print("NEWSAPI ERROR:", e)
         return None
+# =========================================================
+# 🧠 NEWS + SENTIMENT（真正版本）
+# =========================================================
+def get_news_sentiment(symbol):
+    try:
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}&newsCount=5"
+        res = requests.get(url, timeout=5)
+        data = res.json()
 
+        news = data.get("news", [])
+        if not news:
+            return "NEUTRAL", "🟡 無新聞 No news"
+
+        text = " ".join([n.get("title","") for n in news]).lower()
+
+        positive = ["beat","growth","strong","upgrade","record","ai"]
+        negative = ["miss","drop","downgrade","weak","loss","cut"]
+
+        score = 0
+        for w in positive:
+            if w in text:
+                score += 1
+        for w in negative:
+            if w in text:
+                score -= 1
+
+        if score >= 2:
+            return "POSITIVE", "🟢 利好 Positive"
+        elif score <= -2:
+            return "NEGATIVE", "🔴 利淡 Negative"
+        else:
+            return "NEUTRAL", "🟡 中性 Neutral"
+
+    except Exception as e:
+        print("SENTIMENT ERROR:", e)
+        return "NEUTRAL", "⚠️ error"
 
 # =========================================================
 # 🧠 MASTER NEWS FUNCTION（智能 fallback）
@@ -390,7 +425,7 @@ def stock_all():
 
         # 🔥 新聞
         news = get_news(s)
-
+        sentiment, senti_text = get_news_sentiment(s)
         msg += f"""📈【{s}】
 
 💰 價格 Price：{round(d['price'],2)}
@@ -413,6 +448,9 @@ def stock_all():
 
 📰 新聞 News：
 {news}
+
+🧠 情緒 Sentiment：
+{senti_text}
 
 ━━━━━━━━━━━━━━
 """
@@ -457,7 +495,7 @@ def loop():
         if score < 3:
             continue
 
-        candidates.append((s, d, score, sig, news_text))
+        candidates.append((s, d, score, sig, news_text, sentiment))
 
         # =================================================
         # 🟢 ENTRY ALERT
@@ -500,7 +538,8 @@ def loop():
 👉 信號：{sig}
 ⭐ Score：{round(score,1)}
 
-📰 {news_text}
+🧠 市場：{market_msg}
+📰 情緒：{news_text}
 
 ━━━━━━━━━━
 """)
