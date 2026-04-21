@@ -44,7 +44,6 @@ def get_yahoo_news(symbol):
 
 def get_newsapi_news(symbol):
     try:
-        API_KEY = NEWS_API_KEY
         if not API_KEY:
             return None
 
@@ -476,55 +475,78 @@ def loop():
         d = calc(df)
         sig = signal_engine(df, d)
 
+        # ======================
+        # 🔥 Volume Filter（流動性）
+        # ======================
+        if df["Volume"].iloc[-1] < 50000:
+            continue
+
+        # ======================
+        # 🔥 Volume Breakout
+        # ======================
+        vol = df["Volume"]
+        vol_ma = vol.rolling(10).mean().iloc[-1]
+        volume_spike = vol.iloc[-1] > vol_ma * 1.5
+
         # 📰 新聞
-        sentiment, news_text = get_news_sentiment(s)
+        news = get_news(s)
+
+        # 🧠 情緒
+        sentiment, senti_text = get_news_sentiment(s)
 
         # ⭐ 評分
         score = score_signal(df, d, sig, sentiment)
 
-        # =================================================
-        # 🔴 市場過濾（最重要）
-        # =================================================
-        if not allow_trade:
-            if "ENTRY" in sig or "BREAKOUT" in sig:
-                continue
+        # 🔥 加 volume 分
+        if volume_spike:
+            score += 1
 
-        # =================================================
+        # ======================
+        # 🔴 市場過濾
+        # ======================
+        if not allow_trade and ("ENTRY" in sig or "BREAKOUT" in sig):
+            continue
+
+        # ======================
         # ⭐ 分數過濾
-        # =================================================
+        # ======================
         if score < 3:
             continue
 
-        candidates.append((s, d, score, sig, news_text, sentiment))
+        candidates.append((s, d, score, sig, news, senti_text))
 
-        # =================================================
+        # ======================
         # 🟢 ENTRY ALERT
-        # =================================================
+        # ======================
         if "ENTRY" in sig:
             if now - last_alert.get(s+"_entry",0) > 1800:
                 send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
 📈 {s}
-💰 價格：{round(d['price'],2)}
+💰 {round(d['price'],2)}
 📊 RR：{round(d['rr'],2)}
 
-📰 {news_text}
+🧠 情緒：
+{senti_text}
+
+📰 新聞：
+{news}
 
 ━━━━━━━━━━
 """)
                 last_alert[s+"_entry"] = now
 
-        # =================================================
+        # ======================
         # 🔴 RISK ALERT
-        # =================================================
+        # ======================
         if "RISK" in sig:
             send(CHAT_ID, f"🔴 RISK｜風險 {s}")
 
-    # =====================================================
-    # 🚀 TOP SIGNAL（排行榜第一）
-    # =====================================================
+    # ======================
+    # 🚀 TOP SIGNAL
+    # ======================
     if candidates:
-        s, d, score, sig, news_text = sorted(
+        s, d, score, sig, news, senti_text = sorted(
             candidates, key=lambda x: x[2], reverse=True
         )[0]
 
@@ -535,13 +557,21 @@ def loop():
 💰 價格：{round(d['price'],2)}
 📊 RR：{round(d['rr'],2)}
 
-👉 信號：{sig}
+👉 信號：
+{sig}
+
 ⭐ Score：{round(score,1)}
 
-🧠 市場：{market_msg}
-📰 情緒：{news_text}
+🌍 市場：
+{market_msg}
 
-━━━━━━━━━━
+🧠 情緒：
+{senti_text}
+
+📰 新聞：
+{news}
+
+━━━━━━━━━━━━━━
 """)
             last_alert[s] = now
 
