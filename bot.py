@@ -616,7 +616,7 @@ def loop():
         # ======================
         # ⭐ 分數過濾
         # ======================
-        if score < 3.5:
+        if score < 4:
             continue
 
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
