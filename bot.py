@@ -715,9 +715,12 @@ def loop():
 # ======================
 def auto_loop():
     while True:
-        loop()
-        time.sleep(300)
+        try:
+            loop()
+        except Exception as e:
+            print("LOOP ERROR:", e)
 
+        time.sleep(300)
 # ======================
 # SEND（發送）
 # ======================
