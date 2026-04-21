@@ -172,9 +172,9 @@ def calc(df):
 
     exec_entry_low = support[0]
     exec_entry_high = support[1]
-
-    exec_stop = support[0] * 0.97
-    exec_target = resistance[1]
+   
+    mid_entry = (exec_entry_low + exec_entry_high) / 2
+    exec_target = mid_entry + (mid_entry - exec_stop) * 2
 
     # ======================
     # 📦 RETURN（整合）
@@ -508,9 +508,6 @@ def stock_all():
 🎯 目標：
 {round(d['exec_target'],2)}
 
-👉 信號：
-{sig} {tags}
-
 🧠 情緒：{senti_text}
 
 📰 新聞：
@@ -620,7 +617,7 @@ def loop():
         if any(x in sig for x in ["ENTRY", "PULLBACK", "RETEST"]):
 
             if now - last_alert.get(s+"_entry",0) > 1800:
-            send(CHAT_ID, f"""🟢【ENTRY｜入場】
+                send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
         📈 {s}
         💰 {round(d['price'],2)}
