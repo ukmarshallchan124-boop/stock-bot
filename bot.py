@@ -176,6 +176,19 @@ def calc(df):
         "rr": rr,
         "rsi": rsi
     }
+# ======================
+# 🧱 SUPPORT / RESISTANCE
+# ======================
+def get_zones(df):
+    high = df["High"].rolling(50).max().iloc[-1]
+    low = df["Low"].rolling(50).min().iloc[-1]
+
+    buffer = (high - low) * 0.02  # zone buffer
+
+    resistance = (high - buffer, high)
+    support = (low, low + buffer)
+
+    return support, resistance
 # =========================================================
 # 🌍 MARKET FILTER（市場過濾｜決定可唔可以交易）
 # =========================================================
@@ -250,22 +263,53 @@ def score_signal(df, d, sig, sentiment):
 def signal_engine(df, d):
     price = d["price"]
 
+    support, resistance = get_zones(df)
+
     recent_high = df["High"].iloc[-20:-3].max()
     recent_low = df["Low"].iloc[-20:-3].min()
 
-    breakout = df["Close"].iloc[-1] > recent_high
-    in_entry = d["entry_low"] <= price <= d["entry_high"]
-    near_entry = d["entry_low"]*0.995 < price < d["entry_high"]*1.005
-    risk_off = df["Close"].iloc[-1] < recent_low
+    breakout = price > recent_high
+    breakdown = price < recent_low
 
-    if risk_off:
+    # ======================
+    # 🔥 Pullback Entry（核心）
+    # ======================
+    pullback_support = support[0] <= price <= support[1]
+
+    # breakout 後回踩
+    breakout_retest = (
+        df["Close"].iloc[-3] > recent_high and
+        support[0] <= price <= support[1]
+    )
+
+    # ======================
+    # 🚫 唔追 breakout
+    # ======================
+    if breakdown:
         return "🔴 RISK｜風險"
+    
+    if "PULLBACK" in sig:
+        score += 2.5
+
+    if "RETEST" in sig:
+        score += 2.5
+
+    # ❌ breakout 不再加分
+    if "BREAKOUT（等回踩）" in sig:
+        score -= 1
+    
     elif breakout:
-        return "🚀 BREAKOUT｜突破"
-    elif in_entry:
+        return "🚫 BREAKOUT（等回踩）"
+
+    elif pullback_support:
+        return "🟢 PULLBACK｜回踩入場"
+
+    elif breakout_retest:
+        return "🔥 RETEST｜突破回踩"
+
+    elif d["entry_low"] <= price <= d["entry_high"]:
         return "🟢 ENTRY｜入場"
-    elif near_entry:
-        return "👀 SETUP｜準備"
+
     else:
         return "🟡 WAIT｜觀望"
 
@@ -442,9 +486,6 @@ def stock_all():
 """
     return msg
 
-# =========================================================
-# 🚀 AUTO SIGNAL LOOP（核心引擎）
-# =========================================================
 # ======================
 # 🚀 LOOP（升級完整版）
 # ======================
@@ -515,8 +556,8 @@ def loop():
         # ======================
         # 🔴 市場過濾
         # ======================
-        if not allow_trade and ("ENTRY" in sig or "BREAKOUT" in sig):
-            continue
+        if not allow_trade and ("ENTRY" in sig or "PULLBACK" in sig or "RETEST" in sig):
+             continue
 
         # ======================
         # ⭐ 分數過濾
@@ -562,7 +603,8 @@ def loop():
         )[0]
 
         vol_tag = "🔥 Volume爆發" if volume_spike else ""
-
+        zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
+        
         if now - last_alert.get(s,0) > 600:
             send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會】
 
@@ -571,7 +613,7 @@ def loop():
 📊 RR：{round(d['rr'],2)}
 
 👉 信號：
-{sig} {vol_tag}
+{sig} {vol_tag} {zone_tag}
 
 ⭐ Score：{round(score,1)}
 
