@@ -318,6 +318,9 @@ def loop():
 # ======================
 def stock_all():
     allow, market_msg = market_filter()
+        except Exception as e:
+        print("STOCK_ALL ERROR:", e)
+        return "⚠️ stock_all error"
 
     header = "🟢 市場偏多（可進攻）" if allow else "🔴 市場偏弱（保守）"
     msg = f"""📊【市場掃描 Pro】
@@ -504,11 +507,11 @@ def webhook():
 """)
 
         elif text.startswith("/stock"):
-    try:
-        send(chat_id, stock_all())
-    except Exception as e:
-        print("STOCK ERROR:", e)
-        send(chat_id, "⚠️ stock error")
+            try:
+                send(chat_id, stock_all())
+            except Exception as e:
+                print("STOCK ERROR:", e)
+                send(chat_id, "⚠️ stock error")
 
         elif text.startswith("/market"):
             send(chat_id, market())
@@ -524,6 +527,9 @@ def webhook():
 
         return "ok"
 
+    except Exception as e:
+        print("WEBHOOK ERROR:", e)
+        return "ok"
     except Exception as e:
         print("WEBHOOK ERROR:", e)
         return "ok"
