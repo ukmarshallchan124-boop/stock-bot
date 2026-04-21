@@ -161,10 +161,12 @@ def calc(df):
     rr = (target - entry_low) / risk if risk > 0 else 0  # Risk Reward
 
     # RSI
-    rsi = round(100 - (100 / (1 + (
-        df["Close"].diff().clip(lower=0).rolling(14).mean() /
-        (-df["Close"].diff().clip(upper=0).rolling(14).mean() + 1e-10)
-    ))),1)
+    rsi_series = 100 - (100 / (1 + (
+    df["Close"].diff().clip(lower=0).rolling(14).mean() /
+    (-df["Close"].diff().clip(upper=0).rolling(14).mean() + 1e-10)
+)))
+
+    rsi = round(rsi_series.iloc[-1], 1)
     # ======================
     # 🧱 SUPPORT ZONE（新）
     # ======================
