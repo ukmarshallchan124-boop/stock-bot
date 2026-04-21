@@ -168,16 +168,16 @@ def calc(df):
 # ====================== 
 def loop():
     try:
-            now = time.time()
-            allow_trade, market_msg = market_filter()
+        now = time.time()
+        allow_trade, market_msg = market_filter()
 
-            candidates = []
+        candidates = []
 
             for s in SYMBOLS:
                 df = get_df(s,"5m")
                 df_15 = get_df(s,"15m")
 
-                if df is None or df.empty or not df_15:
+                if df is None or df.empty or df_15 is None or df_15.empty:
                     continue
 
                 d = calc(df)
@@ -280,8 +280,10 @@ def loop():
                 if decision == "RISK":
                     if now - last_alert.get(s+"_risk",0) > 1800:
                         send(CHAT_ID, f"""🔴【RISK OFF】{s}
-                        risk_off = df["Close"].iloc[-2] < recent_low and df["Close"].iloc[-1] < recent_low
-⚠️ 結構已破
+                        risk_off = (
+    df["Close"].iloc[-2] < recent_low and
+    df["Close"].iloc[-1] < recent_low
+)
 📉 趨勢轉弱
 
 ━━━━━━━━━━""")
@@ -380,7 +382,7 @@ def stock_all():
 
 def market():
     df = get_df("SPY","15m")
-    if not df:
+    if df is None or df.empty:
         return "⚠️ 市場數據不足"
 
     price = df["Close"].iloc[-1]
@@ -404,7 +406,7 @@ def market():
 
 def gold():
     df = get_df("GC=F","15m")  # 黃金期貨
-    if not df:
+    if df is None or df.empty:
         return "⚠️ 黃金數據不足"
 
     price = df["Close"].iloc[-1]
