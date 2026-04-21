@@ -496,13 +496,16 @@ def stock_all():
 💰 價格：{round(d['price'],2)}
 📊 RR：{round(d['rr'],2)} ｜ RSI {d['rsi']}
 
-🎯 Entry（Zone）：
+👉 信號：
+{sig} {tags}
+
+🎯 入場區：
 {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-🛑 Stop：
+🛑 止損：
 {round(d['exec_stop'],2)}
 
-🎯 Target：
+🎯 目標：
 {round(d['exec_target'],2)}
 
 👉 信號：
@@ -585,7 +588,14 @@ def loop():
         # ⭐ 評分
         # ======================
         score = score_signal(df, d, sig, sentiment)
+        # ======================
+        # 🔥 EXECUTION FILTER（新）
+        # ======================
+        valid_signal = any(x in sig for x in ["PULLBACK", "RETEST", "ENTRY"])
 
+        if not valid_signal:
+            continue
+            
         # 🔥 Volume 加分
         if volume_spike:
             score += 1
@@ -605,25 +615,29 @@ def loop():
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
 
         # ======================
-        # 🟢 ENTRY ALERT
+        # 🟢 ENTRY ALERT（升級）
         # ======================
-        if "ENTRY" in sig:
+        if any(x in sig for x in ["ENTRY", "PULLBACK", "RETEST"]):
+
             if now - last_alert.get(s+"_entry",0) > 1800:
-                send(CHAT_ID, f"""🟢【ENTRY｜入場】
+            send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
-📈 {s}
-💰 {round(d['price'],2)}
-📊 RR：{round(d['rr'],2)}
+        📈 {s}
+        💰 {round(d['price'],2)}
+        📊 RR：{round(d['rr'],2)}
 
-🧠 情緒：
-{senti_text}
+        👉 信號：
+        {sig}
 
-📰 新聞：
-{news}
+        🧠 情緒：
+        {senti_text}
+
+        📰 新聞：
+        {news}
 
 ━━━━━━━━━━
 """)
-                last_alert[s+"_entry"] = now
+        last_alert[s+"_entry"] = now
 
         # ======================
         # 🔴 RISK ALERT
@@ -652,6 +666,16 @@ def loop():
 
 👉 信號：
 {sig} {tags}
+
+🎯 入場區：
+{round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
+
+🛑 止損：
+{round(d['exec_stop'],2)}
+
+🎯 目標：
+{round(d['exec_target'],2)}
+
 ⭐ Score：{round(score,1)}
 
 🌍 市場：
