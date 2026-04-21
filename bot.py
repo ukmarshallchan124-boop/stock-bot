@@ -317,7 +317,6 @@ def loop():
 # UI
 # ======================
 def stock_all():
-def stock_all():
     try:
         allow, market_msg = market_filter()
 
