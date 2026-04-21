@@ -13,6 +13,8 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 
 last_alert = {}
 cache = {}
+    if len(cache) > 100:
+        cache.clear() 
 CACHE_TTL = 120
 # ======================
 # 新增：多時間框架 helper
@@ -39,7 +41,7 @@ def signal_engine(df, d):
 
     volume_spike = False
     if vol_ma is not None and not pd.isna(vol_ma):
-        volume_spike = vol.iloc[-1] > vol_ma * 1.5
+        volume_spike = vol.iloc[-1] > vol_ma * 1.5 and vol_ma > 100000
 
     breakout = (
         df["Close"].iloc[-1] > recent_high and
@@ -74,7 +76,7 @@ def signal_engine(df, d):
 # ======================
 def market_filter():
     df = get_df("SPY","15m")
-    if not df:
+    if df is None or df.empty:
         return True, "⚠️ 無法判斷市場"
 
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
@@ -171,7 +173,7 @@ def loop():
                 df = get_df(s,"5m")
                 df_15 = get_df(s,"15m")
 
-                if not df or not df_15:
+                if df is None or df.empty or not df_15:
                     continue
 
                 d = calc(df)
@@ -274,7 +276,7 @@ def loop():
                 if decision == "RISK":
                     if now - last_alert.get(s+"_risk",0) > 1800:
                         send(CHAT_ID, f"""🔴【RISK OFF】{s}
-
+                        risk_off = df["Close"].iloc[-2] < recent_low and df["Close"].iloc[-1] < recent_low
 ⚠️ 結構已破
 📉 趨勢轉弱
 
@@ -285,24 +287,25 @@ def loop():
             # 🚀 TOP SIGNAL（🔥最重要）
             # ======================
             if candidates:
-                top = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
-                s, d, score, decision = top
-                if now - last_alert.get(s,0) > 600:
-                    msg += f"""📈 {s}
+               top = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
+               s, d, score, decision = top
 
-💰 {round(d['price'],2)}
-📊 RR：{round(d['rr'],2)}
+            if now - last_alert.get(s,0) > 600:
+               msg = f"""🚀【TOP SIGNAL】
 
-🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 止損：{round(d['stop'],2)}
+                📈 {s}
+                💰 {round(d['price'],2)}
+                📊 RR：{round(d['rr'],2)}
 
-👉 信號：{decision}
-⭐ Score：{round(score,1)}
+                🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+                🛑 止損：{round(d['stop'],2)}
+
+                👉 信號：{decision}
+                ⭐ Score：{round(score,1)}
 ━━━━━━━━━━
 """
-    last_alert[s] = now
-
-                send(CHAT_ID, msg)
+        last_alert[s] = now
+        send(CHAT_ID, msg)
 
 
         except Exception as e:
@@ -324,7 +327,7 @@ def stock_all():
 
         for s in SYMBOLS:
             df = get_df(s,"5m")
-            if not df:
+            if df is None or df.empty:
                 continue
 
             d = calc(df)
@@ -521,8 +524,8 @@ def webhook():
 
 @app.route("/scan")
 def scan():
-    loop()
-    return "scan done"
+    threading.Thread(target=loop).start()
+    return "scan started"
 def home():
     return "running"
 
