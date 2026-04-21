@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-NEWS_API_KEY = 60e376f3c4c54b7198c941c3fb96600f
+NEWS_API_KEY = "60e376f3c4c54b7198c941c3fb96600f"
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
@@ -15,10 +15,11 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 last_alert = {}
 cache = {}
 CACHE_TTL = 120
-# ======================
-# REAL NEWS（Yahoo Finance）
-# ======================
-def get_news(symbol):
+# =========================================================
+# 📰 NEWS SYSTEM（Yahoo + NewsAPI fallback）
+# =========================================================
+
+def get_yahoo_news(symbol):
     try:
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}&newsCount=3"
         res = requests.get(url, timeout=5)
@@ -26,7 +27,7 @@ def get_news(symbol):
 
         news = data.get("news", [])
         if not news:
-            return "🟡 無新聞 No news"
+            return None
 
         news_text = ""
         for n in news[:3]:
@@ -38,21 +39,14 @@ def get_news(symbol):
 
     except Exception as e:
         print("YAHOO NEWS ERROR:", e)
-        return "⚠️ Yahoo news error"
+        return None
 
-def get_news(symbol):
-        news = get_yahoo_news(symbol)
-        if "error" in news or "無新聞" in news:
-        news = get_newsapi_news(symbol)
-            return news
-# ======================
-# REAL NEWS（NewsAPI）
-# ======================
-def get_news(symbol):
+
+def get_newsapi_news(symbol):
     try:
         API_KEY = os.getenv("NEWS_API_KEY")
         if not API_KEY:
-            return "⚠️ No News API key"
+            return None
 
         url = f"https://newsapi.org/v2/everything?q={symbol}&sortBy=publishedAt&pageSize=3&apiKey={API_KEY}"
         res = requests.get(url, timeout=5)
@@ -60,7 +54,7 @@ def get_news(symbol):
 
         articles = data.get("articles", [])
         if not articles:
-            return "🟡 無新聞 No news"
+            return None
 
         news_text = ""
         for a in articles[:3]:
@@ -71,14 +65,25 @@ def get_news(symbol):
         return news_text.strip()
 
     except Exception as e:
-        print("NEWS ERROR:", e)
-        return "⚠️ News error"
+        print("NEWSAPI ERROR:", e)
+        return None
 
+
+# =========================================================
+# 🧠 MASTER NEWS FUNCTION（智能 fallback）
+# =========================================================
 def get_news(symbol):
-        news = get_yahoo_news(symbol)
-        if "error" in news or "無新聞" in news:
-        news = get_newsapi_news(symbol)
-            return news
+    news = get_yahoo_news(symbol)
+
+    if news:
+        return news
+
+    news = get_newsapi_news(symbol)
+
+    if news:
+        return news
+
+    return "🟡 無新聞 No news"
 # ======================
 # DATA（數據獲取 Data Fetch）
 # ======================
@@ -161,43 +166,7 @@ def market_filter():
         return True, "🟢 Risk ON（市場健康）"
     else:
         return True, "🟡 中性（Selective trades）"
-# =========================================================
-# 📰 NEWS + SENTIMENT（新聞情緒分析）
-# =========================================================
-def get_news_sentiment(symbol):
-    try:
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}&newsCount=5"
-        res = requests.get(url, timeout=5)
-        data = res.json()
 
-        news = data.get("news", [])
-        if not news:
-            return "NEUTRAL", "🟡 無新聞"
-
-        # 🔥 合併所有標題做簡單 NLP
-        text = " ".join([n.get("title","") for n in news]).lower()
-
-        positive_words = ["beat","growth","strong","upgrade","profit","record"]
-        negative_words = ["miss","drop","downgrade","weak","loss","cut"]
-
-        score = 0
-        for w in positive_words:
-            if w in text:
-                score += 1
-        for w in negative_words:
-            if w in text:
-                score -= 1
-
-        if score >= 2:
-            return "POSITIVE", "🟢 利好 Positive"
-        elif score <= -2:
-            return "NEGATIVE", "🔴 利淡 Negative"
-        else:
-            return "NEUTRAL", "🟡 中性 Neutral"
-
-    except Exception as e:
-        print("NEWS ERROR:", e)
-        return "NEUTRAL", "⚠️ News error"
 # =========================================================
 # ⭐ SCORING ENGINE（信號評分系統）
 # =========================================================
@@ -392,21 +361,6 @@ def long_term():
 
 ━━━━━━━━━━━━━━
 """
-# ======================
-# NEWS（簡單新聞分析 Placeholder）
-# ======================
-def get_news(symbol):
-    # 🔥 之後可以接 News API / Yahoo news
-    # 現在先用簡單 sentiment 模擬
-    fake_news = {
-        "TSLA": "🟢 正面 Positive（AI + 自動駕駛利好）",
-        "NVDA": "🟢 正面 Positive（AI需求強勁）",
-        "AMD": "🟡 中性 Neutral（等待數據）",
-        "XOM": "🟢 正面 Positive（油價支撐）",
-        "JPM": "🔴 負面 Negative（金融壓力）"
-    }
-    return fake_news.get(symbol, "🟡 中性 Neutral")
-
 
 # ======================
 # STOCK SCAN PRO（升級版 UI）
