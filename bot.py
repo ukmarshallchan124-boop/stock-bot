@@ -751,6 +751,10 @@ def webhook():
 
     return "ok"
 
+@app.route("/", methods=["GET"])
+def home():
+    return "OK"
+
 @app.route("/scan")
 def scan():
     loop()
