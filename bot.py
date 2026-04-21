@@ -14,81 +14,6 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 last_alert = {}
 cache = {}
 CACHE_TTL = 120
-# ======================
-# 新增：多時間框架 helper
-# ======================
-def get_trend(symbol):
-    df_15 = get_df(symbol,"15m")
-    if df_15 is None or df_15.empty:
-        return "未知"
-
-    ma = df_15["Close"].rolling(20).mean().iloc[-1]
-    return "上升" if df_15["Close"].iloc[-1] > ma else "下降"
-
-# ======================
-# SIGNAL ENGINE
-# ======================
-def signal_engine(df, d):
-    price = d["price"]
-
-    recent_high = df["High"].iloc[-20:-3].max()
-    recent_low = df["Low"].iloc[-20:-3].min()
-
-    vol = df["Volume"]
-    vol_ma = vol.rolling(10).mean().iloc[-1]
-
-    volume_spike = False
-    if vol_ma is not None and not pd.isna(vol_ma):
-        volume_spike = vol.iloc[-1] > vol_ma * 1.5 and vol_ma > 50000
-
-    breakout = (
-        df["Close"].iloc[-1] > recent_high and
-        df["Close"].iloc[-2] > recent_high
-    )
-
-    in_entry = d["entry_low"] <= price <= d["entry_high"]and d["macd_up"]
-    near_entry = d["entry_low"]*0.999 < price < d["entry_high"]*1.001
-    
-    risk_off = (
-    df["Close"].iloc[-2] < recent_low and
-    df["Close"].iloc[-1] < recent_low
-    )
-    good_rr = d["rr"] > 1.5
-    good_rsi = 52 < d["rsi"] < 65
-
-    if risk_off:
-        decision = "RISK"
-    elif breakout and volume_spike and d["trend_up"] and good_rr and d["rsi"] < 70:
-        decision = "BREAKOUT"
-    elif in_entry and d["trend_up"] and good_rsi and good_rr:
-        decision = "ENTRY"
-    elif near_entry:
-        decision = "SETUP"
-    else:
-        decision = "WAIT"
-
-    return {
-        "decision": decision,
-        "volume_spike": volume_spike
-    }
-
-# ======================
-# MARKET FILTER
-# ======================
-def market_filter():
-    df = get_df("SPY","15m")
-    if df is None or df.empty:
-        return True, "⚠️ 無法判斷市場"
-
-    ma20 = df["Close"].rolling(20).mean().iloc[-1]
-    ma5 = df["Close"].rolling(5).mean().iloc[-1]
-    trend = df["Close"].iloc[-1] > ma20
-    momentum = ma5 > ma20
-
-    if not trend and not momentum:
-        return False, "🔴 Risk OFF（轉弱）"
-    else:
-        return True, "🟢 Risk ON（市場健康）"
 
 # ======================
 # DATA
@@ -116,6 +41,17 @@ def get_df(symbol, interval):
     except Exception as e:
         print("DATA ERROR:", e)
         return None
+
+# ======================
+# TREND
+# ======================
+def get_trend(symbol):
+    df = get_df(symbol,"15m")
+    if df is None or df.empty:
+        return "未知"
+
+    ma = df["Close"].rolling(20).mean().iloc[-1]
+    return "上升" if df["Close"].iloc[-1] > ma else "下降"
 
 # ======================
 # CALC
@@ -148,8 +84,10 @@ def calc(df):
         entry_high = low * 1.03
         stop = low * 0.97
         target = high * 1.02
+
         risk = entry_low - stop
         rr = (target - entry_low) / risk if risk > 0 else 0
+
         return {
             "price": price,
             "rsi": rsi,
@@ -165,13 +103,81 @@ def calc(df):
     except Exception as e:
         print("CALC ERROR:", e)
         return None
+
 # ======================
-# AUTO SIGNAL LOOP（🔥核心）
+# SIGNAL ENGINE
+# ======================
+def signal_engine(df, d):
+    price = d["price"]
+
+    recent_high = df["High"].iloc[-20:-3].max()
+    recent_low = df["Low"].iloc[-20:-3].min()
+
+    vol = df["Volume"]
+    vol_ma = vol.rolling(10).mean().iloc[-1]
+
+    volume_spike = False
+    if vol_ma is not None and not pd.isna(vol_ma):
+        volume_spike = vol.iloc[-1] > vol_ma * 1.5 and vol_ma > 50000
+
+    breakout = (
+        df["Close"].iloc[-1] > recent_high and
+        df["Close"].iloc[-2] > recent_high
+    )
+
+    in_entry = d["entry_low"] <= price <= d["entry_high"] and d["macd_up"]
+    near_entry = d["entry_low"]*0.999 < price < d["entry_high"]*1.001
+
+    risk_off = (
+        df["Close"].iloc[-2] < recent_low and
+        df["Close"].iloc[-1] < recent_low
+    )
+
+    good_rr = d["rr"] > 1.5
+    good_rsi = 52 < d["rsi"] < 65
+
+    if risk_off:
+        decision = "RISK"
+    elif breakout and volume_spike and d["trend_up"] and good_rr and d["rsi"] < 70:
+        decision = "BREAKOUT"
+    elif in_entry and d["trend_up"] and good_rsi and good_rr:
+        decision = "ENTRY"
+    elif near_entry:
+        decision = "SETUP"
+    else:
+        decision = "WAIT"
+
+    return {
+        "decision": decision,
+        "volume_spike": volume_spike
+    }
+
+# ======================
+# MARKET FILTER
+# ======================
+def market_filter():
+    df = get_df("SPY","15m")
+    if df is None or df.empty:
+        return True, "⚠️ 無法判斷市場"
+
+    ma20 = df["Close"].rolling(20).mean().iloc[-1]
+    ma5 = df["Close"].rolling(5).mean().iloc[-1]
+
+    trend = df["Close"].iloc[-1] > ma20
+    momentum = ma5 > ma20
+
+    if not trend and not momentum:
+        return False, "🔴 Risk OFF（轉弱）"
+    else:
+        return True, "🟢 Risk ON（市場健康）"
+
+# ======================
+# LOOP
 # ======================
 def loop():
     try:
         now = time.time()
-        allow_trade, market_msg = market_filter()
+        allow_trade, _ = market_filter()
         candidates = []
 
         for s in SYMBOLS:
@@ -219,216 +225,30 @@ def loop():
 
             candidates.append((s, d, score, decision))
 
+            # ENTRY alert
+            if decision == "ENTRY":
+                if now - last_alert.get(s+"_entry", 0) > 1800:
+                    send(CHAT_ID, f"🟢 ENTRY {s} | {round(d['price'],2)}")
+                    last_alert[s+"_entry"] = now
+
         # TOP SIGNAL
         if candidates:
             s, d, score, decision = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
 
             if now - last_alert.get(s, 0) > 600:
-                msg = f"""🚀【TOP SIGNAL】
-
-📈 {s}
-💰 {round(d['price'],2)}
-📊 RR：{round(d['rr'],2)}
-
-🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 止損：{round(d['stop'],2)}
-
-👉 信號：{decision}
-⭐ Score：{round(score,1)}
-━━━━━━━━━━
-"""
+                send(CHAT_ID, f"🚀 TOP {s} | Score {round(score,1)}")
                 last_alert[s] = now
-                send(CHAT_ID, msg)
 
     except Exception as e:
         print("LOOP ERROR:", e)
 
-            # 🟢 ENTRY
-            if decision == "ENTRY":
-                if now - last_alert.get(s+"_entry", 0) > 1800:
-                    send(CHAT_ID, f"""🟢【ENTRY】{s}
-💰 {round(d['price'],2)}
-🎯 {round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 止損：{round(d['stop'],2)}
-📊 RR：{round(d['rr'],2)}
-━━━━━━━━━━""")
-                    last_alert[s+"_entry"] = now
-
-            # 🔴 RISK
-            if decision == "RISK":
-                if now - last_alert.get(s+"_risk", 0) > 1800:
-                    send(CHAT_ID, f"""🔴【RISK OFF】{s}
-⚠️ 結構已破
-📉 趨勢轉弱
-━━━━━━━━━━""")
-                    last_alert[s+"_risk"] = now
-
-        # 🚀 TOP SIGNAL
-        if candidates:
-            top = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
-            s, d, score, decision = top
-
-            if now - last_alert.get(s, 0) > 600:
-                msg = f"""🚀【TOP SIGNAL】
-
-📈 {s}
-💰 {round(d['price'],2)}
-📊 RR：{round(d['rr'],2)}
-
-🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 止損：{round(d['stop'],2)}
-
-👉 信號：{decision}
-⭐ Score：{round(score,1)}
-━━━━━━━━━━
-"""
-                last_alert[s] = now
-                send(CHAT_ID, msg)
-
-    except Exception as e:
-        print("LOOP ERROR:", e)
 # ======================
-# UI
+# AUTO LOOP
 # ======================
-def stock_all():
-    try:
-        allow, market_msg = market_filter()
-
-        header = "🟢 市場偏多（可進攻）" if allow else "🔴 市場偏弱（保守）"
-        msg = f"""📊【市場掃描 Pro】
-{market_msg}
-{header}
-
-━━━━━━━━━━━━━━
-"""
-
-        for s in SYMBOLS:
-            df = get_df(s,"5m")
-            if df is None or df.empty:
-                continue
-
-            d = calc(df)
-            if not d:
-                continue
-
-            sig = signal_engine(df,d)
-            decision = sig["decision"]
-
-            trend_big = get_trend(s)
-
-            mapping = {
-                "ENTRY":"🟢 入場",
-                "BREAKOUT":"🚀 突破",
-                "SETUP":"👀 準備",
-                "RISK":"🔴 風險",
-                "WAIT":"🟡 觀望"
-            }
-
-            signal_ui = mapping.get(decision,"🟡")
-
-            if not allow and decision in ["ENTRY","BREAKOUT"]:
-                signal_ui = "❌ 市場弱（無效）"
-
-            msg += f"""📈 {s}
-
-💰 {round(d['price'],2)} ｜ RSI {d['rsi']}
-📊 RR：{round(d['rr'],2)}
-
-📈 大趨勢（15m）：{trend_big}
-📉 小趨勢（5m）：{"上升" if d['trend_up'] else "下降"}
-
-🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
-🛑 止損：{round(d['stop'],2)}
-
-👉 信號：{signal_ui}
-
-━━━━━━━━━━━━━━
-"""
-
-        return msg
-
-    except Exception as e:
-        print("STOCK_ALL ERROR:", e)
-        return "⚠️ stock_all error"
-
-def market():
-    df = get_df("SPY","15m")
-    if df is None or df.empty:
-        return "⚠️ 市場數據不足"
-
-    price = df["Close"].iloc[-1]
-    ma20 = df["Close"].rolling(20).mean().iloc[-1]
-
-    trend = "上升" if price > ma20 else "下降"
-
-    return f"""🌍【市場分析】
-
-📊 S&P500（SPY）
-趨勢：{trend}
-
-📉 結構：
-{"仍然健康" if trend=="上升" else "開始轉弱"}
-
-📊 解讀：
-👉 {"可做多（但控風險）" if trend=="上升" else "減倉 / 保守"}
-
-━━━━━━━━━━━━━━
-"""
-
-def gold():
-    df = get_df("GC=F","15m")  # 黃金期貨
-    if df is None or df.empty:
-        return "⚠️ 黃金數據不足"
-
-    price = df["Close"].iloc[-1]
-    ma20 = df["Close"].rolling(20).mean().iloc[-1]
-
-    trend = "上升" if price > ma20 else "下降"
-
-    return f"""🥇【黃金分析】
-
-💰 價格：{round(price,2)}
-
-📈 趨勢：{trend}
-
-📊 邏輯：
-• 市場風險 ↑ → 黃金 ↑
-• 利率 ↓ → 黃金 ↑
-
-👉 建議：
-{"可作避險配置" if trend=="上升" else "暫時觀望"}
-
-━━━━━━━━━━━━━━
-"""
-
-def long_term():
-    spy = get_df("SPY","1d")
-    msft = get_df("MSFT","1d")
-    vwra = get_df("VWRA.L","1d")
-
-    def trend(df):
-        if df is None or df.empty: return "未知"
-        price = df["Close"].iloc[-1]
-        ma = df["Close"].rolling(50).mean().iloc[-1]
-        return "上升" if price > ma else "回調"
-
-    return f"""📈【長線投資】
-
-📊 S&P500（SPY）：{trend(spy)}
-👉 核心市場
-
-📊 VWRA（全球）：{trend(vwra)}
-👉 分散風險
-
-📊 Microsoft：{trend(msft)}
-👉 科技龍頭
-
-💡 策略：
-• 上升 → 持續DCA
-• 回調 → 分段加倉
-
-━━━━━━━━━━━━━━
-"""
+def auto_loop():
+    while True:
+        loop()
+        time.sleep(300)
 
 # ======================
 # SEND
@@ -448,63 +268,33 @@ def send(chat_id, msg):
 # ======================
 @app.route("/", methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json()
-        print("IN:", data)
-
-        if not data:
-            return "ok"
-
-        message = data.get("message")
-        if not message:
-            return "ok"
-
-        chat_id = message["chat"]["id"]
-        text = message.get("text", "").lower().strip()
-
-        print("TEXT:", text)
-
-        if text.startswith("/start"):
-            send(chat_id, """🚀 Bot 已啟動
-
-📊 /stock
-🌍 /market
-🥇 /gold
-📈 /long
-""")
-
-        elif text.startswith("/stock"):
-            try:
-                send(chat_id, stock_all())
-            except Exception as e:
-                print("STOCK ERROR:", e)
-                send(chat_id, "⚠️ stock error")
-
-        elif text.startswith("/market"):
-            send(chat_id, market())
-
-        elif text.startswith("/gold"):
-            send(chat_id, gold())
-
-        elif text.startswith("/long"):
-            send(chat_id, long_term())
-
-        else:
-            send(chat_id, "❓ 未知指令")
-
+    data = request.get_json()
+    if not data:
         return "ok"
 
-    except Exception as e:
-        print("WEBHOOK ERROR:", e)
+    message = data.get("message")
+    if not message:
         return "ok"
 
+    chat_id = message["chat"]["id"]
+    text = message.get("text", "").lower()
+
+    if "/start" in text:
+        send(chat_id, "Bot Ready 🚀")
+    elif "/stock" in text:
+        loop()
+        send(chat_id, "Scan done")
+
+    return "ok"
 
 @app.route("/scan")
 def scan():
-    threading.Thread(target=loop).start()
-    return "scan started"
-def home():
-    return "running"
+    loop()
+    return "scan done"
 
+# ======================
+# RUN
+# ======================
 if __name__ == "__main__":
+    threading.Thread(target=auto_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=10000)
