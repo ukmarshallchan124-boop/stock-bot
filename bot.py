@@ -481,19 +481,19 @@ start_background()
 def webhook():
     try:
         data = request.get_json()
-print("IN:", data)
+        print("IN:", data)
 
-if not data:
+        if not data:
            return "ok"
 
          message = data.get("message")
-if not message:
+        if not message:
            return "ok"
 
          chat_id = message["chat"]["id"]
          text = message.get("text","").lower().strip()
          print("TEXT:", text)
-if not data:
+        if not data:
             return "ok"
 
         message = data.get("message")
