@@ -370,8 +370,7 @@ def stock_all():
 
 ━━━━━━━━━━━━━━
 """
-
-return msg
+            return msg
     except Exception as e:
     print("STOCK_ALL ERROR:", e)
     return "⚠️ stock_all error"
