@@ -46,8 +46,7 @@ def signal_engine(df, d):
         df["Close"].iloc[-2] > recent_high
     )
 
-    in_entry = d["entry_low"] <= price <= d["entry_high"]
-    and d["macd_up"]
+    in_entry = d["entry_low"] <= price <= d["entry_high"]and d["macd_up"]
     near_entry = d["entry_low"]*0.999 < price < d["entry_high"]*1.001
     
     risk_off = (
@@ -88,7 +87,7 @@ def market_filter():
 
     if not trend and not momentum:
         return False, "🔴 Risk OFF（轉弱）"
-        else:
+    else:
         return True, "🟢 Risk ON（市場健康）"
 
 # ======================
@@ -169,12 +168,9 @@ def calc(df):
 # ======================
 # AUTO SIGNAL LOOP（🔥核心）
 # ======================
-def auto_loop():
-    while True:
-        loop()
-        time.sleep(300)  # 5分鐘
+def loop():
+    try:
         now = time.time()
-        threading.Thread(target=auto_loop).start()
         allow_trade, market_msg = market_filter()
         candidates = []
 
@@ -185,6 +181,9 @@ def auto_loop():
             if df is None or df.empty or df_15 is None or df_15.empty:
                 continue
 
+            if len(df) < 25:
+                continue
+
             d = calc(df)
             if not d:
                 continue
@@ -192,54 +191,57 @@ def auto_loop():
             sig = signal_engine(df, d)
             decision = sig["decision"]
 
-            # 🔥 多時間框架
             ma20_15 = df_15["Close"].rolling(20).mean().iloc[-1]
             trend_15 = df_15["Close"].iloc[-1] > ma20_15
             if not trend_15:
                 continue
 
-            # 🔥 假突破過濾
             recent_high = df["High"].iloc[-20:-3].max()
             fake_bo = (
                 df["Close"].iloc[-1] > recent_high and
                 df["Close"].iloc[-2] < recent_high
             )
-            if len(df) < 25:
-                continue
             if fake_bo:
                 continue
 
-            # 🔥 市場弱 → 不做
             if not allow_trade:
                 continue
 
-            # 🔥 評分系統
             score = 0
-            if decision == "ENTRY":
-                score += 2
-            if decision == "BREAKOUT":
-                score += 2.5
-            if d["macd_up"]:
-                score += 1
-            if sig["volume_spike"]:
-                score += 1
-            if d["rr"] > 2:
-                score += 1
+            if decision == "ENTRY": score += 2
+            if decision == "BREAKOUT": score += 2.5
+            if d["macd_up"]: score += 1
+            if sig["volume_spike"]: score += 1
+            if d["rr"] > 2: score += 1
 
             if score < 3.5:
                 continue
 
             candidates.append((s, d, score, decision))
 
-            # 👀 SETUP
-            if decision == "SETUP":
-                if now - last_alert.get(s+"_setup", 0) > 1800:
-                    send(CHAT_ID, f"""👀【SETUP】{s}
+        # TOP SIGNAL
+        if candidates:
+            s, d, score, decision = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
+
+            if now - last_alert.get(s, 0) > 600:
+                msg = f"""🚀【TOP SIGNAL】
+
+📈 {s}
 💰 {round(d['price'],2)}
-🎯 {round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 📊 RR：{round(d['rr'],2)}
-━━━━━━━━━━""")
-                    last_alert[s+"_setup"] = now
+
+🎯 入場：{round(d['entry_low'],2)} - {round(d['entry_high'],2)}
+🛑 止損：{round(d['stop'],2)}
+
+👉 信號：{decision}
+⭐ Score：{round(score,1)}
+━━━━━━━━━━
+"""
+                last_alert[s] = now
+                send(CHAT_ID, msg)
+
+    except Exception as e:
+        print("LOOP ERROR:", e)
 
             # 🟢 ENTRY
             if decision == "ENTRY":
