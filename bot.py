@@ -264,8 +264,10 @@ def score_signal(df, d, sig, sentiment):
         score += 1
     elif sentiment == "NEGATIVE":
         score -= 1.5
-        
-        support, resistance = get_zones(df)
+    # ======================
+    # 📍 Zone 加分
+    # ======================    
+    support, resistance = get_zones(df)
     if support[0] <= d["price"] <= support[1]:
         score += 1
 
@@ -302,15 +304,15 @@ def signal_engine(df, d):
     # ======================
     if breakdown:
         return "🔴 RISK｜風險"
-       
-    elif breakout:
-        return "🚫 BREAKOUT（等回踩）"
+
+    elif breakout_retest:
+        return "🔥 RETEST｜突破回踩"
 
     elif pullback_support:
         return "🟢 PULLBACK｜回踩入場"
 
-    elif breakout_retest:
-        return "🔥 RETEST｜突破回踩"
+    elif breakout:
+        return "🚫 BREAKOUT（等回踩）"
 
     elif d["entry_low"] <= price <= d["entry_high"]:
         return "🟢 ENTRY｜入場"
@@ -464,6 +466,8 @@ def stock_all():
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
 
         vol_tag = "🔥 Volume" if volume_spike else ""
+        zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
+        tags = " ".join(filter(None, [vol_tag, zone_tag]))
 
         news = get_news(s)
         sentiment, senti_text = get_news_sentiment(s)
@@ -480,7 +484,7 @@ def stock_all():
 🎯 Target：{round(d['target'],2)}
 
 👉 信號：
-{sig} {vol_tag}
+{sig} {tags}
 
 🧠 情緒：{senti_text}
 
@@ -517,8 +521,10 @@ def loop():
         # ======================
         ma20_15 = df15["Close"].rolling(20).mean().iloc[-1]
         trend_15 = df15["Close"].iloc[-1] > ma20_15
-        structure_ok = df["Low"].iloc[-1] > df["Low"].iloc[-5]
-
+        structure_ok = (
+        df["Low"].iloc[-1] > df["Low"].iloc[-5] and
+        df["High"].iloc[-1] > df["High"].iloc[-5]
+)
         if not trend_15:
             continue
         
@@ -613,6 +619,7 @@ def loop():
 
         vol_tag = "🔥 Volume爆發" if volume_spike else ""
         zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
+        tags = " ".join(filter(None, [vol_tag, zone_tag]))
         
         if now - last_alert.get(s,0) > 600:
             send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會】
@@ -622,8 +629,7 @@ def loop():
 📊 RR：{round(d['rr'],2)}
 
 👉 信號：
-{sig} {vol_tag} {zone_tag}
-
+{sig} {tags}
 ⭐ Score：{round(score,1)}
 
 🌍 市場：
