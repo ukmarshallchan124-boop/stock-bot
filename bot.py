@@ -287,12 +287,8 @@ def loop():
             if candidates:
                 top = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
                 s, d, score, decision = top
-
-                msg = f"🚀【今日最強機會】\n{market_msg}\n\n"
-
-                for s, d, score, decision in top:
-                    if now - last_alert.get(s,0) > 600:
-                        msg += f"""📈 {s}
+                if now - last_alert.get(s,0) > 600:
+                    msg += f"""📈 {s}
 
 💰 {round(d['price'],2)}
 📊 RR：{round(d['rr'],2)}
@@ -304,7 +300,7 @@ def loop():
 ⭐ Score：{round(score,1)}
 ━━━━━━━━━━
 """
-                        last_alert[s] = now
+    last_alert[s] = now
 
                 send(CHAT_ID, msg)
 
