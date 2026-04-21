@@ -225,11 +225,20 @@ def score_signal(df, d, sig, sentiment):
     # ======================
     if "ENTRY" in sig:
         score += 2
-    if "BREAKOUT" in sig:
+
+    # ❌ 唔再追 breakout
+    if "BREAKOUT（等回踩）" in sig:
+        score -= 1
+
+    # ✅ 新策略（核心）
+    if "PULLBACK" in sig:
+        score += 2.5
+
+    if "RETEST" in sig:
         score += 2.5
 
     # ======================
-    # 📊 RR（風險回報）
+    # 📊 RR
     # ======================
     if d["rr"] > 2:
         score += 1
@@ -243,13 +252,13 @@ def score_signal(df, d, sig, sentiment):
         score += 1
 
     # ======================
-    # ⚡ RSI（健康區）
+    # ⚡ RSI
     # ======================
     if 50 < d["rsi"] < 65:
         score += 1
 
     # ======================
-    # 📰 新聞情緒
+    # 📰 情緒
     # ======================
     if sentiment == "POSITIVE":
         score += 1
@@ -287,17 +296,7 @@ def signal_engine(df, d):
     # ======================
     if breakdown:
         return "🔴 RISK｜風險"
-    
-    if "PULLBACK" in sig:
-        score += 2.5
-
-    if "RETEST" in sig:
-        score += 2.5
-
-    # ❌ breakout 不再加分
-    if "BREAKOUT（等回踩）" in sig:
-        score -= 1
-    
+       
     elif breakout:
         return "🚫 BREAKOUT（等回踩）"
 
