@@ -172,9 +172,14 @@ def calc(df):
 
     exec_entry_low = support[0]
     exec_entry_high = support[1]
-   
+    
+    exec_stop = support[0] * 0.97
+    
     mid_entry = (exec_entry_low + exec_entry_high) / 2
     exec_target = mid_entry + (mid_entry - exec_stop) * 2
+
+    exec_rr = (exec_target - mid_entry) / (mid_entry - exec_stop)
+
 
     # ======================
     # 📦 RETURN（整合）
@@ -186,7 +191,7 @@ def calc(df):
         "entry_high": entry_high,
         "stop": stop,
         "target": target,
-        "rr": rr,
+        "rr": exec_rr,
         "rsi": rsi,
 
         # 🔥 新增（execution用）
@@ -195,6 +200,7 @@ def calc(df):
         "exec_stop": exec_stop,
         "exec_target": exec_target
 }
+    
         # ======================
         # 🧱 SUPPORT / RESISTANCE
         # ======================
@@ -208,6 +214,7 @@ def get_zones(df):
     support = (low, low + buffer)
 
     return support, resistance
+    
 # =========================================================
 # 🌍 MARKET FILTER（市場過濾｜決定可唔可以交易）
 # =========================================================
@@ -634,7 +641,7 @@ def loop():
 
 ━━━━━━━━━━
 """)
-        last_alert[s+"_entry"] = now
+                last_alert[s+"_entry"] = now
 
         # ======================
         # 🔴 RISK ALERT
