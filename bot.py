@@ -522,7 +522,10 @@ def webhook():
         return "ok"
 
 
-@app.route("/")
+@app.route("/scan")
+def scan():
+    loop()
+    return "scan done"
 def home():
     return "running"
 
