@@ -98,6 +98,9 @@ def get_df(symbol, interval):
     key = f"{symbol}_{interval}"
     now = time.time()
 
+    if len(cache) > 100:
+        cache.clear()
+
     if key in cache:
         data, ts = cache[key]
         if now - ts < CACHE_TTL:
@@ -173,15 +176,15 @@ def loop():
 
         candidates = []
 
-            for s in SYMBOLS:
+        for s in SYMBOLS:
                 df = get_df(s,"5m")
                 df_15 = get_df(s,"15m")
 
-                if df is None or df.empty or df_15 is None or df_15.empty:
+            if df is None or df.empty or df_15 is None or df_15.empty:
                     continue
 
                 d = calc(df)
-                if not d:
+            if not d:
                     continue
 
                 sig = signal_engine(df, d)
@@ -193,7 +196,7 @@ def loop():
                 ma20_15 = df_15["Close"].rolling(20).mean().iloc[-1]
                 trend_15 = df_15["Close"].iloc[-1] > ma20_15
 
-                if not trend_15:
+            if not trend_15:
                     continue
 
                 # ======================
@@ -206,13 +209,13 @@ def loop():
                     df["Close"].iloc[-2] < recent_high
                 )
 
-                if fake_bo:
+            if fake_bo:
                     continue
 
                 # ======================
                 # 🔥 市場弱 → 不交易
                 # ======================
-                if not allow_trade:
+            if not allow_trade:
                     continue
 
                 # ======================
@@ -220,23 +223,23 @@ def loop():
                 # ======================
                 score = 0
 
-                if decision == "ENTRY":
+            if decision == "ENTRY":
                     score += 2
 
-                if decision == "BREAKOUT":
+            if decision == "BREAKOUT":
                     score += 2.5
 
-                if d["macd_up"]:
+            if d["macd_up"]:
                     score += 1
 
-                if sig["volume_spike"]:
+            if sig["volume_spike"]:
                     score += 1
 
-                if d["rr"] > 2:
+            if d["rr"] > 2:
                     score += 1
 
                 # 🔥 只留高質
-                if score < 3.5:
+            if score < 3.5:
                     continue
 
                 candidates.append((s, d, score, decision))
@@ -244,8 +247,8 @@ def loop():
                 # ======================
                 # 👀 SETUP
                 # ======================
-                if decision == "SETUP":
-                    if now - last_alert.get(s+"_setup",0) > 1800:
+            if decision == "SETUP":
+                if now - last_alert.get(s+"_setup",0) > 1800:
                         send(CHAT_ID, f"""👀【SETUP】{s}
 📈 趨勢：{"上升" if d['trend_up'] else "下降"}
 💰 {round(d['price'],2)}
@@ -259,8 +262,8 @@ def loop():
                 # ======================
                 # 🟢 ENTRY（詳細）
                 # ======================
-                if decision == "ENTRY" and allow_trade:
-                    if now - last_alert.get(s+"_entry",0) > 1800:
+            if decision == "ENTRY" and allow_trade:
+                if now - last_alert.get(s+"_entry",0) > 1800:
                         send(CHAT_ID, f"""🟢【ENTRY】{s}
 
 💰 價格：{round(d['price'],2)}
@@ -277,8 +280,8 @@ def loop():
                 # ======================
                 # 🔴 RISK
                 # ======================
-                if decision == "RISK":
-                    if now - last_alert.get(s+"_risk",0) > 1800:
+            if decision == "RISK":
+                if now - last_alert.get(s+"_risk",0) > 1800:
                         send(CHAT_ID, f"""🔴【RISK OFF】{s}
                         risk_off = (
     df["Close"].iloc[-2] < recent_low and
@@ -292,11 +295,11 @@ def loop():
             # ======================
             # 🚀 TOP SIGNAL（🔥最重要）
             # ======================
-            if candidates:
+        if candidates:
                top = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
                s, d, score, decision = top
 
-                if now - last_alert.get(s,0) > 600:
+            if now - last_alert.get(s,0) > 600:
                    msg = f"""🚀【TOP SIGNAL】
 
                 📈 {s}
@@ -314,8 +317,8 @@ def loop():
         send(CHAT_ID, msg)
 
 
-        except Exception as e:
-            print("LOOP ERROR:", e)
+    except Exception as e:
+        print("LOOP ERROR:", e)
 # ======================
 # UI
 # ======================
@@ -436,7 +439,7 @@ def long_term():
     vwra = get_df("VWRA.L","1d")
 
     def trend(df):
-        if not df: return "未知"
+        if df is None or df.empty: return "未知"
         price = df["Close"].iloc[-1]
         ma = df["Close"].rolling(50).mean().iloc[-1]
         return "上升" if price > ma else "回調"
