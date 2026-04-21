@@ -13,15 +13,19 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 
 last_alert = {}
 cache = {}
+def get_df(symbol, interval):
+    key = f"{symbol}_{interval}"
+    now = time.time()
+
     if len(cache) > 100:
-        cache.clear() 
+        cache.clear()
 CACHE_TTL = 120
 # ======================
 # 新增：多時間框架 helper
 # ======================
 def get_trend(symbol):
     df_15 = get_df(symbol,"15m")
-    if not df_15:
+    if df_15 is None or df_15.empty:
         return "未知"
 
     ma = df_15["Close"].rolling(20).mean().iloc[-1]
@@ -290,8 +294,8 @@ def loop():
                top = sorted(candidates, key=lambda x: x[2], reverse=True)[0]
                s, d, score, decision = top
 
-            if now - last_alert.get(s,0) > 600:
-               msg = f"""🚀【TOP SIGNAL】
+                if now - last_alert.get(s,0) > 600:
+                   msg = f"""🚀【TOP SIGNAL】
 
                 📈 {s}
                 💰 {round(d['price'],2)}
