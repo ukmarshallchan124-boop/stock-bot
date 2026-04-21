@@ -165,17 +165,36 @@ def calc(df):
         df["Close"].diff().clip(lower=0).rolling(14).mean() /
         (-df["Close"].diff().clip(upper=0).rolling(14).mean() + 1e-10)
     ))),1)
+# ======================
+# 🧱 SUPPORT ZONE（新）
+# ======================
+support, resistance = get_zones(df)
 
-    return {
-        "price": price,
-        "trend_up": trend_up,
-        "entry_low": entry_low,
-        "entry_high": entry_high,
-        "stop": stop,
-        "target": target,
-        "rr": rr,
-        "rsi": rsi
-    }
+exec_entry_low = support[0]
+exec_entry_high = support[1]
+
+exec_stop = support[0] * 0.97
+exec_target = resistance[1]
+
+# ======================
+# 📦 RETURN（整合）
+# ======================
+return {
+    "price": price,
+    "trend_up": trend_up,
+    "entry_low": entry_low,
+    "entry_high": entry_high,
+    "stop": stop,
+    "target": target,
+    "rr": rr,
+    "rsi": rsi,
+
+    # 🔥 新增（execution用）
+    "exec_entry_low": exec_entry_low,
+    "exec_entry_high": exec_entry_high,
+    "exec_stop": exec_stop,
+    "exec_target": exec_target
+}
 # ======================
 # 🧱 SUPPORT / RESISTANCE
 # ======================
