@@ -48,8 +48,11 @@ def signal_engine(df, d):
 
     in_entry = d["entry_low"] <= price <= d["entry_high"]
     near_entry = d["entry_low"]*0.999 < price < d["entry_high"]*1.001
-    risk_off = price < recent_low
-
+    
+    risk_off = (
+    df["Close"].iloc[-2] < recent_low and
+    df["Close"].iloc[-1] < recent_low
+    )
     good_rr = d["rr"] > 1.5
     good_rsi = 52 < d["rsi"] < 65
 
