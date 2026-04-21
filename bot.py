@@ -505,7 +505,11 @@ def webhook():
 """)
 
         elif text.startswith("/stock"):
-            send(chat_id, stock_all())
+    try:
+        send(chat_id, stock_all())
+    except Exception as e:
+        print("STOCK ERROR:", e)
+        send(chat_id, "⚠️ stock error")
 
         elif text.startswith("/market"):
             send(chat_id, market())
