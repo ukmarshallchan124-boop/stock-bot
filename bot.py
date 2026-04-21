@@ -264,6 +264,10 @@ def score_signal(df, d, sig, sentiment):
         score += 1
     elif sentiment == "NEGATIVE":
         score -= 1.5
+        
+        support, resistance = get_zones(df)
+    if support[0] <= d["price"] <= support[1]:
+        score += 1
 
     return score
 # ======================
@@ -283,14 +287,16 @@ def signal_engine(df, d):
     # ======================
     # 🔥 Pullback Entry（核心）
     # ======================
-    pullback_support = support[0] <= price <= support[1]
-
+    pullback_support = (
+    support[0] <= price <= support[1] and
+    df["Close"].iloc[-1] > df["Close"].iloc[-2]
+)
     # breakout 後回踩
     breakout_retest = (
-        df["Close"].iloc[-3] > recent_high and
-        support[0] <= price <= support[1]
-    )
-
+    df["Close"].iloc[-3] > recent_high and
+    df["Close"].iloc[-2] > recent_high and
+    support[0] <= price <= support[1]
+)
     # ======================
     # 🚫 唔追 breakout
     # ======================
@@ -511,10 +517,14 @@ def loop():
         # ======================
         ma20_15 = df15["Close"].rolling(20).mean().iloc[-1]
         trend_15 = df15["Close"].iloc[-1] > ma20_15
+        structure_ok = df["Low"].iloc[-1] > df["Low"].iloc[-5]
 
         if not trend_15:
             continue
-
+        
+        if not structure_ok:
+            continue
+       
         # ======================
         # 🔥 Fake Breakout Filter（新）
         # ======================
@@ -561,7 +571,7 @@ def loop():
         # ======================
         # ⭐ 分數過濾
         # ======================
-        if score < 3:
+        if score < 4:
             continue
 
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
