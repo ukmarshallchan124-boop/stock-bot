@@ -335,7 +335,6 @@ def stock_all():
         d = calc(df)
         if not d:
             continue
-
         sig = signal_engine(df,d)
         decision = sig["decision"]
 
