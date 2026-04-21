@@ -470,14 +470,6 @@ def send(chat_id, msg):
         print("SEND ERROR:", e)
 
 # ======================
-# START
-# ======================
-def start_background():
-    threading.Thread(target=loop, daemon=True).start()
-
-start_background()
-
-# ======================
 # WEBHOOK
 # ======================
 @app.route("/", methods=["POST"])
