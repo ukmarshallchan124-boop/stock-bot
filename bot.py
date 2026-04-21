@@ -39,7 +39,7 @@ def signal_engine(df, d):
 
     volume_spike = False
     if vol_ma is not None and not pd.isna(vol_ma):
-        volume_spike = vol.iloc[-1] > vol_ma * 1.5 and vol_ma > 100000
+        volume_spike = vol.iloc[-1] > vol_ma * 1.5 and vol_ma > 50000
 
     breakout = (
         df["Close"].iloc[-1] > recent_high and
@@ -47,6 +47,7 @@ def signal_engine(df, d):
     )
 
     in_entry = d["entry_low"] <= price <= d["entry_high"]
+    and d["macd_up"]
     near_entry = d["entry_low"]*0.999 < price < d["entry_high"]*1.001
     
     risk_off = (
@@ -82,10 +83,12 @@ def market_filter():
 
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     ma5 = df["Close"].rolling(5).mean().iloc[-1]
+    trend = df["Close"].iloc[-1] > ma20
+    momentum = ma5 > ma20
 
-    if ma5 < ma20:
-        return False, "🔴 Risk OFF（市場轉弱）"
-    else:
+    if not trend and not momentum:
+        return False, "🔴 Risk OFF（轉弱）"
+        else:
         return True, "🟢 Risk ON（市場健康）"
 
 # ======================
@@ -166,9 +169,12 @@ def calc(df):
 # ======================
 # AUTO SIGNAL LOOP（🔥核心）
 # ======================
-def loop():
-    try:
+def auto_loop():
+    while True:
+        loop()
+        time.sleep(300)  # 5分鐘
         now = time.time()
+        threading.Thread(target=auto_loop).start()
         allow_trade, market_msg = market_filter()
         candidates = []
 
@@ -198,6 +204,8 @@ def loop():
                 df["Close"].iloc[-1] > recent_high and
                 df["Close"].iloc[-2] < recent_high
             )
+            if len(df) < 25:
+                continue
             if fake_bo:
                 continue
 
