@@ -317,7 +317,7 @@ def loop():
 # UI
 # ======================
 def stock_all():
-    try:
+        try:
         allow, market_msg = market_filter()
 
         header = "🟢 市場偏多（可進攻）" if allow else "🔴 市場偏弱（保守）"
@@ -373,7 +373,7 @@ def stock_all():
 
         return msg
 
-    except Exception as e:
+        except Exception as e:
         print("STOCK_ALL ERROR:", e)
         return "⚠️ stock_all error"
 
@@ -460,7 +460,7 @@ def long_term():
 # SEND
 # ======================
 def send(chat_id, msg):
-    try:
+        try:
         requests.post(
             f"{URL}/sendMessage",
             json={"chat_id": chat_id, "text": msg[:4000]},
@@ -482,7 +482,7 @@ start_background()
 # ======================
 @app.route("/", methods=["POST"])
 def webhook():
-    try:
+        try:
         data = request.get_json()
         print("IN:", data)
 
