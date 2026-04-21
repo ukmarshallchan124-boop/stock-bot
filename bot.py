@@ -410,55 +410,44 @@ def stock_all():
         d = calc(df)
         sig = signal_engine(df,d)
 
-        # 🔥 趨勢文字
-        trend_text = "📈 上升 Uptrend" if d["trend_up"] else "📉 下降 Downtrend"
+        vol = df["Volume"]
+        vol_ma = vol.rolling(10).mean().iloc[-1]
+        volume_spike = vol.iloc[-1] > vol_ma * 1.5
 
-        # 🔥 信號解釋
-        explain = {
-            "🟢 ENTRY｜入場": "👉 可考慮入場（風險已定）",
-            "👀 SETUP｜準備": "👉 接近入場區（等待確認）",
-            "🚀 BREAKOUT｜突破": "👉 強勢突破（追勢）",
-            "🔴 RISK｜風險": "👉 跌穿支撐（避開）",
-            "🟡 WAIT｜觀望": "👉 無明確方向"
-        }.get(sig, "")
+        vol_tag = "🔥 Volume" if volume_spike else ""
 
-        # 🔥 新聞
         news = get_news(s)
         sentiment, senti_text = get_news_sentiment(s)
+
         msg += f"""📈【{s}】
 
-💰 價格 Price：{round(d['price'],2)}
+💰 價格：{round(d['price'],2)}
 📊 RR：{round(d['rr'],2)} ｜ RSI {d['rsi']}
 
-{trend_text}
-
-🎯 入場 Entry：
+🎯 Entry：
 {round(d['entry_low'],2)} - {round(d['entry_high'],2)}
 
-🛑 止損 Stop：
-{round(d['stop'],2)}
+🛑 Stop：{round(d['stop'],2)}
+🎯 Target：{round(d['target'],2)}
 
-🎯 目標 Target：
-{round(d['target'],2)}
+👉 信號：
+{sig} {vol_tag}
 
-🧠 信號 Signal：
-{sig}
-{explain}
+🧠 情緒：{senti_text}
 
-📰 新聞 News：
+📰 新聞：
 {news}
-
-🧠 情緒 Sentiment：
-{senti_text}
 
 ━━━━━━━━━━━━━━
 """
-
     return msg
 
 # =========================================================
 # 🚀 AUTO SIGNAL LOOP（核心引擎）
 # =========================================================
+# ======================
+# 🚀 LOOP（升級完整版）
+# ======================
 def loop():
     now = time.time()
 
@@ -469,35 +458,57 @@ def loop():
 
     for s in SYMBOLS:
         df = get_df(s,"5m")
-        if df is None or len(df) < 25:
+        df15 = get_df(s,"15m")
+
+        if df is None or df15 is None or len(df) < 25:
             continue
 
         d = calc(df)
         sig = signal_engine(df, d)
 
         # ======================
-        # 🔥 Volume Filter（流動性）
+        # 🔥 多時間框架確認（新）
         # ======================
-        if df["Volume"].iloc[-1] < 50000:
+        ma20_15 = df15["Close"].rolling(20).mean().iloc[-1]
+        trend_15 = df15["Close"].iloc[-1] > ma20_15
+
+        if not trend_15:
             continue
 
         # ======================
-        # 🔥 Volume Breakout
+        # 🔥 Fake Breakout Filter（新）
+        # ======================
+        recent_high = df["High"].iloc[-20:-3].max()
+        fake_bo = (
+            df["Close"].iloc[-1] > recent_high and
+            df["Close"].iloc[-2] < recent_high
+        )
+        if fake_bo:
+            continue
+
+        # ======================
+        # 🔥 Volume Filter（修正）
         # ======================
         vol = df["Volume"]
         vol_ma = vol.rolling(10).mean().iloc[-1]
+
+        if vol.iloc[-1] < 50000:
+            continue
+
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
 
-        # 📰 新聞
+        # ======================
+        # 📰 新聞 + 情緒
+        # ======================
         news = get_news(s)
-
-        # 🧠 情緒
         sentiment, senti_text = get_news_sentiment(s)
 
+        # ======================
         # ⭐ 評分
+        # ======================
         score = score_signal(df, d, sig, sentiment)
 
-        # 🔥 加 volume 分
+        # 🔥 Volume 加分
         if volume_spike:
             score += 1
 
@@ -513,7 +524,7 @@ def loop():
         if score < 3:
             continue
 
-        candidates.append((s, d, score, sig, news, senti_text))
+        candidates.append((s, d, score, sig, news, senti_text, volume_spike))
 
         # ======================
         # 🟢 ENTRY ALERT
@@ -543,12 +554,14 @@ def loop():
             send(CHAT_ID, f"🔴 RISK｜風險 {s}")
 
     # ======================
-    # 🚀 TOP SIGNAL
+    # 🚀 TOP SIGNAL（升級UI）
     # ======================
     if candidates:
-        s, d, score, sig, news, senti_text = sorted(
+        s, d, score, sig, news, senti_text, volume_spike = sorted(
             candidates, key=lambda x: x[2], reverse=True
         )[0]
+
+        vol_tag = "🔥 Volume爆發" if volume_spike else ""
 
         if now - last_alert.get(s,0) > 600:
             send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會】
@@ -558,7 +571,7 @@ def loop():
 📊 RR：{round(d['rr'],2)}
 
 👉 信號：
-{sig}
+{sig} {vol_tag}
 
 ⭐ Score：{round(score,1)}
 
