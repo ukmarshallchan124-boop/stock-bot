@@ -161,8 +161,7 @@ def calc(df):
 # AUTO SIGNAL LOOP（🔥核心）
 # ====================== 
 def loop():
-    while True:
-        try:
+    try:
             now = time.time()
             allow_trade, market_msg = market_filter()
 
