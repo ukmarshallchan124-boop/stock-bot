@@ -13,12 +13,6 @@ SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 
 last_alert = {}
 cache = {}
-def get_df(symbol, interval):
-    key = f"{symbol}_{interval}"
-    now = time.time()
-
-    if len(cache) > 100:
-        cache.clear()
 CACHE_TTL = 120
 # ======================
 # 新增：多時間框架 helper
