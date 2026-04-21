@@ -317,48 +317,45 @@ def loop():
 # UI
 # ======================
 def stock_all():
-    allow, market_msg = market_filter()
-        except Exception as e:
-        print("STOCK_ALL ERROR:", e)
-        return "⚠️ stock_all error"
+    try:
+        allow, market_msg = market_filter()
 
-    header = "🟢 市場偏多（可進攻）" if allow else "🔴 市場偏弱（保守）"
-    msg = f"""📊【市場掃描 Pro】
+        header = "🟢 市場偏多（可進攻）" if allow else "🔴 市場偏弱（保守）"
+        msg = f"""📊【市場掃描 Pro】
 {market_msg}
 {header}
 
 ━━━━━━━━━━━━━━
 """
 
-    for s in SYMBOLS:
-        df = get_df(s,"5m")
-        if not df:
-            continue
+        for s in SYMBOLS:
+            df = get_df(s,"5m")
+            if not df:
+                continue
 
-        d = calc(df)
-        if not d:
-            continue
-        sig = signal_engine(df,d)
-        decision = sig["decision"]
+            d = calc(df)
+            if not d:
+                continue
 
-        trend_big = get_trend(s)
+            sig = signal_engine(df,d)
+            decision = sig["decision"]
 
-        # UI mapping
-        mapping = {
-            "ENTRY":"🟢 入場",
-            "BREAKOUT":"🚀 突破",
-            "SETUP":"👀 準備",
-            "RISK":"🔴 風險",
-            "WAIT":"🟡 觀望"
-        }
+            trend_big = get_trend(s)
 
-        signal_ui = mapping.get(decision,"🟡")
+            mapping = {
+                "ENTRY":"🟢 入場",
+                "BREAKOUT":"🚀 突破",
+                "SETUP":"👀 準備",
+                "RISK":"🔴 風險",
+                "WAIT":"🟡 觀望"
+            }
 
-        # 市場過濾
-        if not allow and decision in ["ENTRY","BREAKOUT"]:
-            signal_ui = "❌ 市場弱（無效）"
+            signal_ui = mapping.get(decision,"🟡")
 
-        msg += f"""📈 {s}
+            if not allow and decision in ["ENTRY","BREAKOUT"]:
+                signal_ui = "❌ 市場弱（無效）"
+
+            msg += f"""📈 {s}
 
 💰 {round(d['price'],2)} ｜ RSI {d['rsi']}
 📊 RR：{round(d['rr'],2)}
@@ -374,7 +371,11 @@ def stock_all():
 ━━━━━━━━━━━━━━
 """
 
-    return msg
+        return msg
+
+    except Exception as e:
+        print("STOCK_ALL ERROR:", e)
+        return "⚠️ stock_all error"
 
 def market():
     df = get_df("SPY","15m")
@@ -459,13 +460,13 @@ def long_term():
 # SEND
 # ======================
 def send(chat_id, msg):
-       try:
+    try:
         requests.post(
             f"{URL}/sendMessage",
             json={"chat_id": chat_id, "text": msg[:4000]},
             timeout=10
         )
-       except Exception as e:
+    except Exception as e:
         print("SEND ERROR:", e)
 
 # ======================
@@ -481,7 +482,7 @@ start_background()
 # ======================
 @app.route("/", methods=["POST"])
 def webhook():
-        try:
+    try:
         data = request.get_json()
         print("IN:", data)
 
@@ -527,9 +528,6 @@ def webhook():
 
         return "ok"
 
-    except Exception as e:
-        print("WEBHOOK ERROR:", e)
-        return "ok"
     except Exception as e:
         print("WEBHOOK ERROR:", e)
         return "ok"
