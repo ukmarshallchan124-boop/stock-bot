@@ -317,6 +317,7 @@ def loop():
 # UI
 # ======================
 def stock_all():
+def stock_all():
     try:
         allow, market_msg = market_filter()
 
@@ -370,10 +371,12 @@ def stock_all():
 
 ━━━━━━━━━━━━━━
 """
-            return msg
+
+        return msg
+
     except Exception as e:
-    print("STOCK_ALL ERROR:", e)
-    return "⚠️ stock_all error"
+        print("STOCK_ALL ERROR:", e)
+        return "⚠️ stock_all error"
 
 def market():
     df = get_df("SPY","15m")
