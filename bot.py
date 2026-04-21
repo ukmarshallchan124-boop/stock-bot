@@ -484,16 +484,6 @@ def webhook():
         print("IN:", data)
 
         if not data:
-           return "ok"
-
-         message = data.get("message")
-        if not message:
-           return "ok"
-
-         chat_id = message["chat"]["id"]
-         text = message.get("text","").lower().strip()
-         print("TEXT:", text)
-        if not data:
             return "ok"
 
         message = data.get("message")
@@ -501,7 +491,9 @@ def webhook():
             return "ok"
 
         chat_id = message["chat"]["id"]
-        text = message.get("text","").lower().strip()
+        text = message.get("text", "").lower().strip()
+
+        print("TEXT:", text)
 
         if text.startswith("/start"):
             send(chat_id, """🚀 Bot 已啟動
@@ -527,6 +519,10 @@ def webhook():
         else:
             send(chat_id, "❓ 未知指令")
 
+        return "ok"
+
+    except Exception as e:
+        print("WEBHOOK ERROR:", e)
         return "ok"
 
     except Exception as e:
