@@ -371,11 +371,10 @@ def stock_all():
 ━━━━━━━━━━━━━━
 """
 
-        return msg
-
-        except Exception as e:
-        print("STOCK_ALL ERROR:", e)
-        return "⚠️ stock_all error"
+return msg
+    except Exception as e:
+    print("STOCK_ALL ERROR:", e)
+    return "⚠️ stock_all error"
 
 def market():
     df = get_df("SPY","15m")
