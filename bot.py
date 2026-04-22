@@ -194,6 +194,7 @@ def calc(df):
         "price": price,
         "trend_up": trend_up,
         "rsi": rsi,
+        "rr": exec_rr,
 
         # 🔥 新增（execution用）
         "exec_entry_low": exec_entry_low,
