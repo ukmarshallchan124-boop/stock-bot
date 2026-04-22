@@ -728,7 +728,7 @@ def loop():
         # ======================
         range_pct = (df["High"].iloc[-20:].max() - df["Low"].iloc[-20:].min()) / d["price"]
 
-        if range_pct < 0.01:
+        if range_pct < 0.01 and d["rsi"] < 55:
             continue
             
         # ======================
@@ -756,15 +756,11 @@ def loop():
         # 13:30 - 14:00 UTC（美股開市亂流）
         if hour == 13 and minute >= 30:
             continue
-
-        # 美股開市 14:30 UK = 13:30 UTC
-        if 13 <= hour < 14:
-            continue
-        
+       
         # ======================
         # 🔥 EXECUTION FILTER（新）
         # ======================
-        valid_signal = any(x in sig for x in ["PULLBACK", "RETEST"])
+        valid_signal = any(x in sig for x in ["PULLBACK", "RETEST", "吸貨確認"])
 
         if not valid_signal:
             continue
@@ -825,9 +821,9 @@ def loop():
         # 🔴 RISK ALERT
         # ======================
         if "RISK" in sig:
-        if now - last_alert.get(s+"_risk",0) > 1800:
-            send(CHAT_ID, f"🔴 RISK｜風險 {s}")
-            last_alert[s+"_risk"] = now
+            if now - last_alert.get(s+"_risk",0) > 1800:
+                send(CHAT_ID, f"🔴 RISK｜風險 {s}")
+                last_alert[s+"_risk"] = now
             
     # ======================
     # 🚀 TOP SIGNAL（升級UI）
