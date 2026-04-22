@@ -338,13 +338,44 @@ def score_signal(df, d, sig, sentiment):
 # SIGNAL ENGINE（信號引擎）
 # ======================
 def signal_engine(df, d):
+    # ======================
+    # 安全檢查
+    # ======================
+    if len(df) < 30:
+        return "🟡 WAIT｜數據不足"
+
     price = d["price"]
 
+    # ======================
+    # 基本區間
+    # ======================
     support, resistance = get_zones(df)
 
-    recent_high = df["High"].iloc[-20:-3].max()
-    recent_low = df["Low"].iloc[-20:-3].min()
+    recent_high = df["High"].iloc[-30:-5].max()
+    recent_low = df["Low"].iloc[-30:-5].min()
 
+    # ======================
+    # 🔥 Better Support
+    # ======================
+    better_support = get_better_support(df)
+
+    if better_support is None:
+        valid_support = False
+    else:
+        valid_support = check_support_valid(df, better_support)
+
+    # ======================
+    # 🔥 結構轉變（升級版）
+    # ======================
+    structure_shift = (
+        df["Low"].iloc[-1] > df["Low"].iloc[-3] and
+        df["Low"].iloc[-2] > df["Low"].iloc[-4] and
+        df["High"].iloc[-1] > df["High"].iloc[-3]
+    )
+
+    # ======================
+    # Breakout / Breakdown
+    # ======================
     breakout = price > recent_high
     breakdown = price < recent_low
 
