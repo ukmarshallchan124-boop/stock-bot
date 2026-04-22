@@ -713,12 +713,12 @@ def loop():
         else:
             rr_multiplier = 1.3 
             
-            # 🔥 RR adaptive override
+        # 🔥 RR adaptive override
         d["exec_target"] = mid_entry + risk * rr_multiplier
         d["rr"] = (d["exec_target"] - mid_entry) / risk if risk > 0 else 0
         d["rr"] = min(d["rr"], 5)
         
-            # ❌ RR 太低直接 skip
+        # ❌ RR 太低直接 skip
         if d["rr"] < 1.5:
             continue
         
@@ -838,6 +838,7 @@ def loop():
             if now - last_alert.get(s+"_entry",0) > 1800:
                 
                 if not any(t["symbol"] == s and t["status"] == "OPEN" for t in trade_log):
+                    
                     trade_log.append({
                         "symbol": s,
                         "entry": d["price"],
@@ -847,6 +848,8 @@ def loop():
                         "signal": sig,
                         "status": "OPEN"
                 })
+                
+                
                 if len(trade_log) > 200:
                     trade_log.pop(0)
                 
