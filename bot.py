@@ -212,7 +212,7 @@ def calc(df):
         "exec_entry_high": exec_entry_high,
         "exec_stop": exec_stop,
         "exec_target": exec_target
-    }
+}
     
         # ======================
         # 🔥 BETTER SUPPORT（新）
@@ -397,7 +397,7 @@ def signal_engine(df, d):
         df["Low"].iloc[-1] > df["Low"].iloc[-3] and
         df["Low"].iloc[-2] > df["Low"].iloc[-4] and
         df["High"].iloc[-1] > df["High"].iloc[-3]
-    )
+)
 
     
     # ======================
@@ -492,8 +492,8 @@ def market():
         action = "🔴 保守 / 避險｜Risk-off"
     else:
         action = "🟡 震盪（等方向）｜Choppy"
-
-    return f"""🌍【市場分析 Market】
+        
+        return f"""🌍【市場分析 Market】
 
 📊 指數 Index：SPY
 💰 價格 Price：{round(price,2)}
@@ -530,8 +530,8 @@ def gold():
     else:
         logic = "💰 資金流向風險資產（Risk-on）"
         action = "🟢 可忽略黃金｜Focus stocks"
-
-    return f"""🥇【黃金分析 Gold】
+        
+        return f"""🥇【黃金分析 Gold】
 
 💰 價格 Price：{round(price,2)}
 
@@ -572,7 +572,7 @@ def long_term():
     spy_trend = analyze(spy)
     msft_trend = analyze(msft)
     vwra_trend = analyze(vwra)
-
+    
     return f"""📈【長線投資 Long Term】
 
 📊 S&P500（SPY）
@@ -645,7 +645,7 @@ def stock_all():
 
 ━━━━━━━━━━━━━━
 """
-    return msg
+        return msg
 
 # ======================
 # 🚀 LOOP（升級完整版）
@@ -676,7 +676,7 @@ def loop():
         structure_ok = (
         df["Low"].iloc[-1] > df["Low"].iloc[-5] and
         df["High"].iloc[-1] > df["High"].iloc[-5]
-)
+        )
         if not trend_15:
             continue
         
@@ -744,7 +744,7 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
-        if any(x in sig for x in ["ENTRY", "PULLBACK", "RETEST"]):
+        if any(x in sig for x in ["PULLBACK", "RETEST"]):
 
             if now - last_alert.get(s+"_entry",0) > 1800:
                 send(CHAT_ID, f"""🟢【ENTRY｜入場】
