@@ -403,24 +403,7 @@ def signal_engine(df, d):
         df["High"].iloc[-1] > df["High"].iloc[-3]
     )
 
-    # ======================
-    # Breakout / Breakdown
-    # ======================
-    breakout = price > recent_high
-    breakdown = price < recent_low
     
-    # ======================
-    # 🕯️ K線過濾（新）
-    # ======================
-
-    # ❌ 假突破（極重要）
-    if candle == "SELL_REJECTION" and breakout:
-        return "⚠️ FAKE BREAKOUT｜假突破"
-
-    # 🔥 吸貨確認（強化pullback）
-    if candle == "BUY_REJECTION" and pullback_support:
-        return "🔥 吸貨確認｜更強PULLBACK"
-        
     # ======================
     # 🔥 momentum
     # ======================
@@ -428,7 +411,10 @@ def signal_engine(df, d):
     df["Close"].iloc[-1] > df["Close"].iloc[-2] and
     df["Close"].iloc[-1] > df["Open"].iloc[-1]
 )
+
+    # 🕯️ Candle
     candle = candle_type(df)
+
     # ======================
     # 🔥 Pullback Entry（核心）
     # ======================
@@ -440,17 +426,35 @@ def signal_engine(df, d):
     structure_shift and
     trend_ok
 )
-    # breakout 後回踩
+
+    # breakout / breakdown
+    breakout = price > recent_high
+    breakdown = price < recent_low
+
+     # breakout 後回踩
     breakout_retest = (
     df["Close"].iloc[-3] > recent_high and
     df["Close"].iloc[-2] > recent_high and
     recent_high * 0.995 <= price <= recent_high * 1.005 and
     momentum_shift
 )
-    
+
+    # ======================
+    # 🕯️ K線過濾（新）
+    # ======================
+
+    # ❌ 假突破
+    if candle == "SELL_REJECTION" and breakout:
+       return "⚠️ FAKE BREAKOUT｜假突破"
+
+    # 🔥 吸貨確認
+    if candle == "BUY_REJECTION" and pullback_support:
+       return "🔥 吸貨確認｜更強PULLBACK"
+
     # ======================
     # 🚫 唔追 breakout
     # ======================
+
     if breakdown:
         return "🔴 RISK｜風險"
 
@@ -462,7 +466,7 @@ def signal_engine(df, d):
 
     elif breakout:
         return "🚫 BREAKOUT（等回踩）"
-    
+
     else:
         return "🟡 WAIT｜觀望"
 
