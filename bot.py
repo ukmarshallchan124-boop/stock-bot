@@ -309,7 +309,7 @@ def score_signal(df, d, sig, sentiment):
         score += 1
     elif sentiment == "NEGATIVE":
         score -= 1.5
-    if sentiment == "UNKNOWN":
+    elif sentiment == "UNKNOWN":
         score -= 0.5   # 輕微減分   
     # ======================
     # 📍 Zone 加分
