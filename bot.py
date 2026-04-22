@@ -547,7 +547,12 @@ def market():
     # GOLD（黃金分析）
     # ======================
 def gold():
-    df = get_df("GC=F","15m")
+    df = get_df("SGLN.L","15m")
+    df_global = get_df("GC=F","15m")
+    
+    if df_global trend up AND SGLN lag:
+       → early opportunity
+    
     if df is None or df.empty:
         return "⚠️ 無法讀取黃金｜Gold data unavailable"
 
