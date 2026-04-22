@@ -612,6 +612,9 @@ def stock_all():
             continue
 
         d = calc(df)
+        if d is None:
+            continue
+    
         sig = signal_engine(df,d)
 
         vol = df["Volume"]
@@ -719,7 +722,15 @@ def loop():
         # ======================
         news = get_news(s)
         sentiment, senti_text = get_news_sentiment(s)
+        
+        # ======================
+        # ❌ 避免橫行市場（Sideway Filter）
+        # ======================
+        range_pct = (df["High"].iloc[-20:].max() - df["Low"].iloc[-20:].min()) / d["price"]
 
+        if range_pct < 0.01:
+            continue
+            
         # ======================
         # ⭐ 評分
         # ======================
@@ -737,8 +748,14 @@ def loop():
         if (d["price"] - d["exec_stop"]) / d["price"] > 0.05:
             continue
 
-        # ❌ 開市頭30分鐘唔玩（超重要）
-        hour = time.gmtime().tm_hour  # UTC
+        # ❌ 開市頭30分鐘唔玩（精準版）
+        now_utc = time.gmtime()
+        hour = now_utc.tm_hour
+        minute = now_utc.tm_min
+
+        # 13:30 - 14:00 UTC（美股開市亂流）
+        if hour == 13 and minute >= 30:
+            continue
 
         # 美股開市 14:30 UK = 13:30 UTC
         if 13 <= hour < 14:
@@ -808,8 +825,10 @@ def loop():
         # 🔴 RISK ALERT
         # ======================
         if "RISK" in sig:
+        if now - last_alert.get(s+"_risk",0) > 1800:
             send(CHAT_ID, f"🔴 RISK｜風險 {s}")
-
+            last_alert[s+"_risk"] = now
+            
     # ======================
     # 🚀 TOP SIGNAL（升級UI）
     # ======================
