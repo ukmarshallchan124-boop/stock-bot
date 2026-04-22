@@ -571,15 +571,16 @@ def stock_all():
 
         news = get_news(s)
         sentiment, senti_text = get_news_sentiment(s)
-
+        
         msg += f"""📈【{s}】
 
 💰 價格：{round(d['price'],2)}
-📊 RR：{round(d['rr'],2)} ｜ RSI {d['rsi']}
+📊 RR：{round(d['rr'],2)} ｜ RSI：{d['rsi']}
 
 👉 信號：
 {sig} {tags}
 
+━━━━━━━━━━━━━━
 🎯 入場區：
 {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
@@ -588,8 +589,10 @@ def stock_all():
 
 🎯 目標：
 {round(d['exec_target'],2)}
+━━━━━━━━━━━━━━
 
-🧠 情緒：{senti_text}
+🧠 情緒：
+{senti_text}
 
 📰 新聞：
 {news}
@@ -703,9 +706,7 @@ def loop():
 📈 {s}
 💰 價格：{round(d['price'],2)}
 
-👉 信號：
-{sig}
-  
+━━━━━━━━━━━━━━
 🎯 入場區：
 {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
@@ -714,6 +715,7 @@ def loop():
 
 🎯 目標：
 {round(d['exec_target'],2)}
+━━━━━━━━━━━━━━
 
 📊 RR：{round(d['rr'],2)}
 
