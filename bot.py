@@ -244,6 +244,37 @@ def get_zones(df):
     support = (low, low + buffer)
 
     return support, resistance
+    def get_zones(df):
+    ...
+    return support, resistance
+
+
+        # ======================
+        # 🕯️ CANDLE ENGINE（新）
+        # ======================
+def candle_type(df):
+    open_ = df["Open"].iloc[-1]
+    close = df["Close"].iloc[-1]
+    high = df["High"].iloc[-1]
+    low = df["Low"].iloc[-1]
+
+    body = abs(close - open_)
+    upper_wick = high - max(open_, close)
+    lower_wick = min(open_, close) - low
+
+    if close > open_ and body > (upper_wick + lower_wick):
+        return "STRONG_BULL"
+
+    if close < open_ and body > (upper_wick + lower_wick):
+        return "STRONG_BEAR"
+
+    if lower_wick > body * 2:
+        return "BUY_REJECTION"
+
+    if upper_wick > body * 2:
+        return "SELL_REJECTION"
+
+    return "NEUTRAL"
     
 # =========================================================
 # 🌍 MARKET FILTER（市場過濾｜決定可唔可以交易）
@@ -377,6 +408,19 @@ def signal_engine(df, d):
     # ======================
     breakout = price > recent_high
     breakdown = price < recent_low
+    
+    # ======================
+    # 🕯️ K線過濾（新）
+    # ======================
+
+    # ❌ 假突破（極重要）
+    if candle == "SELL_REJECTION" and breakout:
+        return "⚠️ FAKE BREAKOUT｜假突破"
+
+    # 🔥 吸貨確認（強化pullback）
+    if candle == "BUY_REJECTION" and pullback_support:
+        return "🔥 吸貨確認｜更強PULLBACK"
+        
     # ======================
     # 🔥 momentum
     # ======================
@@ -384,6 +428,7 @@ def signal_engine(df, d):
     df["Close"].iloc[-1] > df["Close"].iloc[-2] and
     df["Close"].iloc[-1] > df["Open"].iloc[-1]
 )
+    candle = candle_type(df)
     # ======================
     # 🔥 Pullback Entry（核心）
     # ======================
@@ -402,6 +447,7 @@ def signal_engine(df, d):
     recent_high * 0.995 <= price <= recent_high * 1.005 and
     momentum_shift
 )
+    
     # ======================
     # 🚫 唔追 breakout
     # ======================
