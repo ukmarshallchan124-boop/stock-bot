@@ -244,10 +244,6 @@ def get_zones(df):
     support = (low, low + buffer)
 
     return support, resistance
-    def get_zones(df):
-    ...
-    return support, resistance
-
 
         # ======================
         # 🕯️ CANDLE ENGINE（新）
