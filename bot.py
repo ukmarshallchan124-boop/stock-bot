@@ -706,24 +706,24 @@ def loop():
         💰 價格：{round(d['price'],2)}
 
         👉 信號：
-           {sig}
+        {sig}
 
         🎯 入場區：
-           {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
+        {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
         🛑 止損：
-           {round(d['exec_stop'],2)}
+        {round(d['exec_stop'],2)}
 
         🎯 目標：
-           {round(d['exec_target'],2)}
+        {round(d['exec_target'],2)}
 
         📊 RR：{round(d['rr'],2)}
 
         🧠 情緒：
-           {senti_text}
+        {senti_text}
 
         📰 新聞：
-           {news}
+        {news}
 
 ━━━━━━━━━━
 """)
