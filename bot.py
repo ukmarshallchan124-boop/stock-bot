@@ -551,7 +551,7 @@ def gold():
     df_global = get_df("GC=F","15m")
     
     if df_global trend up AND SGLN lag:
-       → early opportunity
+       #early opportunity
     
     if df is None or df.empty:
         return "⚠️ 無法讀取黃金｜Gold data unavailable"
