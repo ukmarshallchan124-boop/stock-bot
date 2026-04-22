@@ -700,28 +700,28 @@ def loop():
             if now - last_alert.get(s+"_entry",0) > 1800:
                 send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
-            📈 {s}
-            💰 價格：{round(d['price'],2)}
+        📈 {s}
+        💰 價格：{round(d['price'],2)}
 
-            👉 信號：
-            {sig}
+        👉 信號：
+           {sig}
 
-            🎯 入場區：
-            {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
+        🎯 入場區：
+           {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-            🛑 止損：
-            {round(d['exec_stop'],2)}
+        🛑 止損：
+           {round(d['exec_stop'],2)}
 
-            🎯 目標：
-            {round(d['exec_target'],2)}
+        🎯 目標：
+           {round(d['exec_target'],2)}
 
-            📊 RR：{round(d['rr'],2)}
+        📊 RR：{round(d['rr'],2)}
 
-            🧠 情緒：
-            {senti_text}
+        🧠 情緒：
+           {senti_text}
 
-            📰 新聞：
-            {news}
+        📰 新聞：
+           {news}
 
 ━━━━━━━━━━
 """)
