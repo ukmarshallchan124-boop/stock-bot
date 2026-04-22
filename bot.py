@@ -202,8 +202,6 @@ def calc(df):
     if risk < price * 0.002:   # 0.2%
         return None
 
-    market_ok, _ = market_filter()
-
     if market_ok:
         rr_multiplier = 2.5
     else:
@@ -299,7 +297,7 @@ def is_bad_setup(d):
         return True
 
     # 🧠 根據過去輸嘅 pattern 避開
-    recent_losses = [t for t in trade_log if t["status"] == "LOSS"]
+    recent_losses = [t for t in trade_log if t["status"] == "LOSS"][-5:]
 
     if len(recent_losses) >= 3:
         avg_loss_rsi = sum(t.get("rsi",50) for t in recent_losses[-3:]) / 3
@@ -546,9 +544,9 @@ def market():
 ━━━━━━━━━━━━━━
 """
 
-# ======================
-# GOLD（黃金分析）
-# ======================
+    # ======================
+    # GOLD（黃金分析）
+    # ======================
 def gold():
     df = get_df("GC=F","15m")
     if df is None or df.empty:
@@ -697,6 +695,14 @@ def loop():
     # 🌍 市場狀態
     allow_trade, market_msg = market_filter()
 
+    if allow_trade:
+        if d["rsi"] > 60:
+        rr_multiplier = 3   # momentum 強 → 加碼
+        else:
+        rr_multiplier = 2.2
+    else:
+        rr_multiplier = 1.3
+    
     candidates = []
 
     for s in SYMBOLS:
@@ -709,6 +715,14 @@ def loop():
         d = calc(df)
         if d is None:
             continue
+            
+            mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
+            risk = mid_entry - d["exec_stop"]
+
+            # 🔥 RR adaptive override
+            d["exec_target"] = mid_entry + risk * rr_multiplier
+            d["rr"] = (d["exec_target"] - mid_entry) / risk if risk > 0 else 0
+
         if is_bad_setup(d):
             continue
             
@@ -762,7 +776,7 @@ def loop():
         # ======================
         range_pct = (df["High"].iloc[-20:].max() - df["Low"].iloc[-20:].min()) / d["price"]
 
-        if range_pct < 0.01 and d["rsi"] < 55:
+        if range_pct < 0.008:
             continue
             
         # ======================
@@ -788,7 +802,7 @@ def loop():
         minute = now_utc.tm_min
 
         # 13:30 - 14:00 UTC（美股開市亂流）
-        if hour == 13 and minute >= 30:
+        if hour == 13:
             continue
        
         # ======================
@@ -825,15 +839,14 @@ def loop():
             if now - last_alert.get(s+"_entry",0) > 1800:
                 
                 if not any(t["symbol"] == s and t["status"] == "OPEN" for t in trade_log):
-
-                trade_log.append({
-                    "symbol": s,
-                    "entry": d["price"],
-                    "target": d["exec_target"],
-                    "stop": d["exec_stop"],
-                    "time": time.time(),
-                    "signal": sig,
-                    "status": "OPEN"
+                    trade_log.append({
+                        "symbol": s,
+                        "entry": d["price"],
+                        "target": d["exec_target"],
+                        "stop": d["exec_stop"],
+                        "time": time.time(),
+                        "signal": sig,
+                        "status": "OPEN"
                 })
                 send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
