@@ -651,7 +651,7 @@ def loop():
         
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
 
-        if vol.iloc[-1] < vol_ma * 0.6:
+        if vol.iloc[-1] < vol_ma * 0.5:
             continue
 
         # ======================
