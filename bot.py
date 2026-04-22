@@ -201,14 +201,8 @@ def calc(df):
     # ❌ 避免風險太細（假RR）
     if risk < price * 0.002:   # 0.2%
         return None
-
-    if market_ok:
-        rr_multiplier = 2.5
-    else:
-        rr_multiplier = 1.5
-
-    exec_target = mid_entry + risk * rr_multiplier
     
+    exec_target = mid_entry + risk * 2
     exec_rr = (exec_target - mid_entry) / risk if risk > 0 else 0
 
     # ❌ 限制最大RR（防假靚）
@@ -695,15 +689,7 @@ def loop():
     # 🌍 市場狀態
     allow_trade, market_msg = market_filter()
 
-    if allow_trade:
-        if d["rsi"] > 60:
-        rr_multiplier = 3   # momentum 強 → 加碼
-        else:
-        rr_multiplier = 2.2
-    else:
-        rr_multiplier = 1.3
-    
-    candidates = []
+     candidates = []
 
     for s in SYMBOLS:
         df = get_df(s,"5m")
@@ -716,13 +702,21 @@ def loop():
         if d is None:
             continue
             
-            mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
-            risk = mid_entry - d["exec_stop"]
-
+        mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
+        risk = mid_entry - d["exec_stop"]
+        if allow_trade:
+            if d["rsi"] > 60:
+                rr_multiplier = 3   # momentum 強 → 加碼
+            else:
+                rr_multiplier = 2.2
+        else:
+                rr_multiplier = 1.3 
+            
             # 🔥 RR adaptive override
-            d["exec_target"] = mid_entry + risk * rr_multiplier
-            d["rr"] = (d["exec_target"] - mid_entry) / risk if risk > 0 else 0
-
+        d["exec_target"] = mid_entry + risk * rr_multiplier
+        d["rr"] = (d["exec_target"] - mid_entry) / risk if risk > 0 else 0
+        d["rr"] = min(d["rr"], 5)
+        
         if is_bad_setup(d):
             continue
             
