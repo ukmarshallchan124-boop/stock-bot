@@ -18,7 +18,6 @@ CACHE_TTL = 120
 # =========================================================
 # 📰 NEWS SYSTEM（Yahoo + NewsAPI fallback）
 # =========================================================
-
 def get_yahoo_news(symbol):
     try:
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}&newsCount=3"
@@ -71,13 +70,13 @@ def get_newsapi_news(symbol):
 # =========================================================
 def get_news_sentiment(symbol):
     try:
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}&newsCount=5"
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol} stock&newsCount=5"
         res = requests.get(url, timeout=5)
         data = res.json()
 
         news = data.get("news", [])
         if not news:
-            return "NEUTRAL", "🟡 無新聞 No news"
+            return "UNKNOWN", "⚠️ 無新聞（數據不足）"
 
         text = " ".join([n.get("title","") for n in news]).lower()
 
@@ -100,8 +99,8 @@ def get_news_sentiment(symbol):
             return "NEUTRAL", "🟡 中性 Neutral"
 
     except Exception as e:
-        print("SENTIMENT ERROR:", e)
-        return "NEUTRAL", "🟡 中性（fallback）"
+           print("SENTIMENT ERROR:", e)
+           return "UNKNOWN", "⚠️ 數據缺失"
 # =========================================================
 # 🧠 MASTER NEWS FUNCTION（智能 fallback）
 # =========================================================
@@ -309,6 +308,8 @@ def score_signal(df, d, sig, sentiment):
         score += 1
     elif sentiment == "NEGATIVE":
         score -= 1.5
+    if sentiment == "UNKNOWN":
+        score -= 0.5   # 輕微減分   
     # ======================
     # 📍 Zone 加分
     # ======================    
