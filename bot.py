@@ -348,7 +348,10 @@ def signal_engine(df, d):
 
     recent_high = df["High"].iloc[-30:-5].max()
     recent_low = df["Low"].iloc[-30:-5].min()
-
+    
+    ma20 = df["Close"].rolling(20).mean().iloc[-1]
+    trend_ok = price > ma20
+   
     # ======================
     # 🔥 Better Support
     # ======================
@@ -389,6 +392,7 @@ def signal_engine(df, d):
     better_support * 0.993 <= price <= better_support * 1.007 and
     momentum_shift and
     structure_shift
+    trend_ok
 )
     # breakout 後回踩
     breakout_retest = (
