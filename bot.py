@@ -20,7 +20,7 @@ CACHE_TTL = 120
 # =========================================================
 def get_yahoo_news(symbol):
     try:
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}&newsCount=3"
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol} stock&newsCount=3"
         res = requests.get(url, timeout=5)
         data = res.json()
 
