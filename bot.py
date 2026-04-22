@@ -172,8 +172,8 @@ def calc(df):
     # ======================
     support, resistance = get_zones(df)
 
-    exec_entry_low = support[0]
-    exec_entry_high = support[1]
+    exec_entry_low = support[0] * 0.995
+    exec_entry_high = support[1] * 1.005
     
     exec_stop = support[0] * 0.97
     
