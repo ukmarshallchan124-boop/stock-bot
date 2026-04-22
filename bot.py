@@ -182,10 +182,7 @@ def calc(df):
     # ======================
     # 🧱 SUPPORT ZONE（新）
     # ======================
-    support, resistance = get_zones(df)
-    better_support = get_better_support(df)
-    valid_support = check_support_valid(df, better_support)
-    
+
     exec_entry_low = support[0] * 0.995
     exec_entry_high = support[1] * 1.005
     
@@ -418,8 +415,8 @@ def signal_engine(df, d):
         return "🚫 BREAKOUT（等回踩）"
 
     elif d["entry_low"] <= price <= d["entry_high"]:
-        return "🟢 ENTRY｜入場"
-
+        return "🟡 ENTRY（弱）｜舊區間"
+    
     else:
         return "🟡 WAIT｜觀望"
 
@@ -653,11 +650,11 @@ def loop():
         # ======================
         vol = df["Volume"]
         vol_ma = vol.rolling(10).mean().iloc[-1]
-
-        if vol.iloc[-1] < 50000:
-            continue
-
+        
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
+
+        if vol.iloc[-1] < vol_ma * 0.6:
+            continue
 
         # ======================
         # 📰 新聞 + 情緒
