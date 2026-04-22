@@ -550,8 +550,18 @@ def gold():
     df = get_df("SGLN.L","15m")
     df_global = get_df("GC=F","15m")
     
-    if df_global trend up AND SGLN lag:
-       #early opportunity
+    if df_global is not None:
+    global_price = df_global["Close"].iloc[-1]
+    global_ma20 = df_global["Close"].rolling(20).mean().iloc[-1]
+
+    sgln_price = df["Close"].iloc[-1]
+    sgln_ma20 = df["Close"].rolling(20).mean().iloc[-1]
+
+    global_up = global_price > global_ma20
+    sgln_lag = sgln_price < sgln_ma20
+
+    if global_up and sgln_lag:
+        print("Early opportunity")
     
     if df is None or df.empty:
         return "⚠️ 無法讀取黃金｜Gold data unavailable"
