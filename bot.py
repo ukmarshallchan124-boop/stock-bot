@@ -101,8 +101,7 @@ def get_news_sentiment(symbol):
 
     except Exception as e:
         print("SENTIMENT ERROR:", e)
-        return "NEUTRAL", "⚠️ error"
-
+        return "NEUTRAL", "🟡 中性（fallback）"
 # =========================================================
 # 🧠 MASTER NEWS FUNCTION（智能 fallback）
 # =========================================================
