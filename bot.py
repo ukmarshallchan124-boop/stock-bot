@@ -340,7 +340,8 @@ def signal_engine(df, d):
     # 🔥 Pullback Entry（核心）
     # ======================
     pullback_support = (
-    support[0] <= price <= support[1] and
+    valid_support and
+    better_support * 0.995 <= price <= better_support * 1.005 and
     df["Close"].iloc[-1] > df["Close"].iloc[-2]
 )
     # breakout 後回踩
