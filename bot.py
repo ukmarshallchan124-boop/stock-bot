@@ -756,15 +756,18 @@ def loop():
 
 👉 信號：
 {sig} {tags}
+━━━━━━━━━━━━━━
 
 🎯 入場區：
-{round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
+{round(d['exec_entry_low'],2)} - 
+{round(d['exec_entry_high'],2)}
 
 🛑 止損：
 {round(d['exec_stop'],2)}
 
 🎯 目標：
 {round(d['exec_target'],2)}
+━━━━━━━━━━━━━━
 
 ⭐ Score：{round(score,1)}
 
