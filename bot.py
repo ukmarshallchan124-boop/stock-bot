@@ -196,8 +196,15 @@ def calc(df):
     mid_entry = (exec_entry_low + exec_entry_high) / 2
     risk = (mid_entry - exec_stop)
 
+    # ❌ 避免風險太細（假RR）
+    if risk < price * 0.002:   # 0.2%
+        return None
+
     exec_target = mid_entry + risk * 2
     exec_rr = (exec_target - mid_entry) / risk if risk > 0 else 0
+
+    # ❌ 限制最大RR（防假靚）
+    exec_rr = min(exec_rr, 5)
 
     # ======================
     # 📦 RETURN
@@ -493,7 +500,7 @@ def market():
     else:
         action = "🟡 震盪（等方向）｜Choppy"
         
-        return f"""🌍【市場分析 Market】
+    return f"""🌍【市場分析 Market】
 
 📊 指數 Index：SPY
 💰 價格 Price：{round(price,2)}
@@ -531,7 +538,7 @@ def gold():
         logic = "💰 資金流向風險資產（Risk-on）"
         action = "🟢 可忽略黃金｜Focus stocks"
         
-        return f"""🥇【黃金分析 Gold】
+    return f"""🥇【黃金分析 Gold】
 
 💰 價格 Price：{round(price,2)}
 
@@ -645,7 +652,7 @@ def stock_all():
 
 ━━━━━━━━━━━━━━
 """
-        return msg
+    return msg
 
 # ======================
 # 🚀 LOOP（升級完整版）
@@ -666,6 +673,8 @@ def loop():
             continue
 
         d = calc(df)
+        if d is None:
+            continue
         sig = signal_engine(df, d)
 
         # ======================
@@ -715,6 +724,26 @@ def loop():
         # ⭐ 評分
         # ======================
         score = score_signal(df, d, sig, sentiment)
+        
+        # ======================
+        # 🛑 RISK CONTROL（新）
+        # ======================
+
+        # ❌ RR 太低唔玩
+        if d["rr"] < 1.5:
+            continue
+
+        # ❌ 止損太遠（輸太多）
+        if (d["price"] - d["exec_stop"]) / d["price"] > 0.05:
+            continue
+
+        # ❌ 開市頭30分鐘唔玩（超重要）
+        hour = time.gmtime().tm_hour  # UTC
+
+        # 美股開市 14:30 UK = 13:30 UTC
+        if 13 <= hour < 14:
+            continue
+        
         # ======================
         # 🔥 EXECUTION FILTER（新）
         # ======================
