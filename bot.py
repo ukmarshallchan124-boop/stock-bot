@@ -399,7 +399,8 @@ def signal_engine(df, d):
     breakout_retest = (
     df["Close"].iloc[-3] > recent_high and
     df["Close"].iloc[-2] > recent_high and
-    recent_high * 0.993 <= price <= recent_high * 1.007
+    recent_high * 0.995 <= price <= recent_high * 1.005 and
+    momentum_shift
 )
     # ======================
     # 🚫 唔追 breakout
