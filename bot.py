@@ -139,7 +139,19 @@ def get_df(symbol, interval):
         return df
     except:
         return None
+# ======================
+# 🔥 BETTER SUPPORT VALIDATION
+# ======================
+def check_support_valid(df, support):
+    if support is None:
+        return False
 
+    touch_count = sum(
+        1 for x in df["Low"].iloc[-20:]
+        if abs(x - support) < support * 0.003
+    )
+
+    return touch_count >= 2
 # ======================
 # CALC（計算 Indicators）
 # ======================
