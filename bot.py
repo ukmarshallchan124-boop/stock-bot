@@ -390,7 +390,7 @@ def signal_engine(df, d):
     # ======================
     pullback_support = (
     valid_support and
-    better_support * 0.993 <= price <= better_support * 1.007and
+    better_support * 0.993 <= price <= better_support * 1.007 and
     df["Close"].iloc[-1] > df["Close"].iloc[-2] and
     structure_shift
 )
@@ -398,7 +398,7 @@ def signal_engine(df, d):
     breakout_retest = (
     df["Close"].iloc[-3] > recent_high and
     df["Close"].iloc[-2] > recent_high and
-    recent_high * 0.995 <= price <= recent_high * 1.005
+    recent_high * 0.993 <= price <= recent_high * 1.007
 )
     # ======================
     # 🚫 唔追 breakout
