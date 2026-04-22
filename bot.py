@@ -207,6 +207,23 @@ def calc(df):
 }
     
         # ======================
+        # 🔥 BETTER SUPPORT（新）
+        # ======================
+def get_better_support(df):
+    lows = df["Low"]
+
+    swing_lows = []
+    for i in range(2, len(df)-2):
+        if lows.iloc[i] < lows.iloc[i-1] and lows.iloc[i] < lows.iloc[i+1]:
+            swing_lows.append(lows.iloc[i])
+
+    if len(swing_lows) < 2:
+        return None
+
+    support = sum(swing_lows[-3:]) / min(len(swing_lows),3)
+    return support
+    
+        # ======================
         # 🧱 SUPPORT / RESISTANCE
         # ======================
 def get_zones(df):
