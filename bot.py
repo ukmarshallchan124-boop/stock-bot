@@ -195,11 +195,6 @@ def calc(df):
     return {
         "price": price,
         "trend_up": trend_up,
-        "entry_low": entry_low,
-        "entry_high": entry_high,
-        "stop": stop,
-        "target": target,
-        "rr": exec_rr,
         "rsi": rsi,
 
         # 🔥 新增（execution用）
