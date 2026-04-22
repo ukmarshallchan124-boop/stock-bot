@@ -171,7 +171,9 @@ def calc(df):
     # 🧱 SUPPORT ZONE（新）
     # ======================
     support, resistance = get_zones(df)
-
+    better_support = get_better_support(df)
+    valid_support = check_support_valid(df, better_support)
+    
     exec_entry_low = support[0] * 0.995
     exec_entry_high = support[1] * 1.005
     
