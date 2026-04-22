@@ -689,7 +689,7 @@ def loop():
     # 🌍 市場狀態
     allow_trade, market_msg = market_filter()
 
-     candidates = []
+    candidates = []
 
     for s in SYMBOLS:
         df = get_df(s,"5m")
@@ -704,18 +704,23 @@ def loop():
             
         mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
         risk = mid_entry - d["exec_stop"]
+        
         if allow_trade:
             if d["rsi"] > 60:
                 rr_multiplier = 3   # momentum 強 → 加碼
             else:
                 rr_multiplier = 2.2
         else:
-                rr_multiplier = 1.3 
+            rr_multiplier = 1.3 
             
             # 🔥 RR adaptive override
         d["exec_target"] = mid_entry + risk * rr_multiplier
         d["rr"] = (d["exec_target"] - mid_entry) / risk if risk > 0 else 0
         d["rr"] = min(d["rr"], 5)
+        
+            # ❌ RR 太低直接 skip
+        if d["rr"] < 1.5:
+            continue
         
         if is_bad_setup(d):
             continue
@@ -796,7 +801,7 @@ def loop():
         minute = now_utc.tm_min
 
         # 13:30 - 14:00 UTC（美股開市亂流）
-        if hour == 13:
+        if hour == 13 and minute >= 30:
             continue
        
         # ======================
@@ -842,6 +847,9 @@ def loop():
                         "signal": sig,
                         "status": "OPEN"
                 })
+                if len(trade_log) > 200:
+                    trade_log.pop(0)
+                
                 send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
 📈 {s}
