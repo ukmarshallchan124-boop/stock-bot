@@ -404,9 +404,6 @@ def signal_engine(df, d):
 
     elif breakout:
         return "🚫 BREAKOUT（等回踩）"
-
-    elif d["entry_low"] <= price <= d["entry_high"]:
-        return "🟡 ENTRY（弱）｜舊區間"
     
     else:
         return "🟡 WAIT｜觀望"
