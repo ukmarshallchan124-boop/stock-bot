@@ -156,39 +156,51 @@ def check_support_valid(df, support):
 def calc(df):
     price = float(df["Close"].iloc[-1])
 
+    # ======================
+    # 📈 Trend
+    # ======================
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
-    trend_up = price > ma20  # 趨勢 Trend
+    trend_up = price > ma20
 
-
-    # RSI
+    # ======================
+    # 📊 RSI
+    # ======================
     rsi_series = 100 - (100 / (1 + (
-    df["Close"].diff().clip(lower=0).rolling(14).mean() /
-    (-df["Close"].diff().clip(upper=0).rolling(14).mean() + 1e-10)
-)))
-
+        df["Close"].diff().clip(lower=0).rolling(14).mean() /
+        (-df["Close"].diff().clip(upper=0).rolling(14).mean() + 1e-10)
+    )))
     rsi = round(rsi_series.iloc[-1], 1)
+
+    # ======================
+    # 🧱 Support 系統（核心修正）
+    # ======================
     support, resistance = get_zones(df)
-    
-    # ======================
-    # 🧱 SUPPORT ZONE（新）
-    # ======================
 
-    exec_entry_low = support[0] * 0.995
-    exec_entry_high = support[1] * 1.005
-    
-    exec_stop = support[0] * 0.97
-    
+    better_support = get_better_support(df)
+    valid_support = check_support_valid(df, better_support)
+
+    # 👉 用更準嘅 support
+    if valid_support:
+        base = better_support
+    else:
+        base = support[0]
+
+    # ======================
+    # 🎯 Execution Zone（統一）
+    # ======================
+    exec_entry_low = base * 0.995
+    exec_entry_high = base * 1.005
+
+    exec_stop = base * 0.97
+
     mid_entry = (exec_entry_low + exec_entry_high) / 2
-    exec_target = mid_entry + (mid_entry - exec_stop) * 2
-
-    exec_rr = (exec_target - mid_entry) / (mid_entry - exec_stop)
-    
     risk = (mid_entry - exec_stop)
+
+    exec_target = mid_entry + risk * 2
     exec_rr = (exec_target - mid_entry) / risk if risk > 0 else 0
 
-
     # ======================
-    # 📦 RETURN（整合）
+    # 📦 RETURN
     # ======================
     return {
         "price": price,
@@ -196,12 +208,11 @@ def calc(df):
         "rsi": rsi,
         "rr": exec_rr,
 
-        # 🔥 新增（execution用）
         "exec_entry_low": exec_entry_low,
         "exec_entry_high": exec_entry_high,
         "exec_stop": exec_stop,
         "exec_target": exec_target
-}
+    }
     
         # ======================
         # 🔥 BETTER SUPPORT（新）
