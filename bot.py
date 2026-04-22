@@ -12,6 +12,8 @@ URL = f"https://api.telegram.org/bot{TOKEN}"
 
 SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 
+trade_log = []
+
 last_alert = {}
 cache = {}
 CACHE_TTL = 120
@@ -200,7 +202,15 @@ def calc(df):
     if risk < price * 0.002:   # 0.2%
         return None
 
-    exec_target = mid_entry + risk * 2
+    market_ok, _ = market_filter()
+
+    if market_ok:
+        rr_multiplier = 2.5
+    else:
+        rr_multiplier = 1.5
+
+    exec_target = mid_entry + risk * rr_multiplier
+    
     exec_rr = (exec_target - mid_entry) / risk if risk > 0 else 0
 
     # ❌ 限制最大RR（防假靚）
@@ -278,6 +288,27 @@ def candle_type(df):
         return "SELL_REJECTION"
 
     return "NEUTRAL"
+    
+    # ============
+    # Fake Signal
+    # ============
+
+def is_bad_setup(d):
+    # 基本 filter
+    if d["rsi"] > 70 or d["rsi"] < 40:
+        return True
+
+    # 🧠 根據過去輸嘅 pattern 避開
+    recent_losses = [t for t in trade_log if t["status"] == "LOSS"]
+
+    if len(recent_losses) >= 3:
+        avg_loss_rsi = sum(t.get("rsi",50) for t in recent_losses[-3:]) / 3
+
+        # 如果而家 RSI 接近過去輸嘅區域 → 避
+        if abs(d["rsi"] - avg_loss_rsi) < 5:
+            return True
+
+    return False
     
 # =========================================================
 # 🌍 MARKET FILTER（市場過濾｜決定可唔可以交易）
@@ -678,6 +709,9 @@ def loop():
         d = calc(df)
         if d is None:
             continue
+        if is_bad_setup(d):
+            continue
+            
         sig = signal_engine(df, d)
 
         # ======================
@@ -789,6 +823,18 @@ def loop():
         if any(x in sig for x in ["PULLBACK", "RETEST"]):
 
             if now - last_alert.get(s+"_entry",0) > 1800:
+                
+                if not any(t["symbol"] == s and t["status"] == "OPEN" for t in trade_log):
+
+                trade_log.append({
+                    "symbol": s,
+                    "entry": d["price"],
+                    "target": d["exec_target"],
+                    "stop": d["exec_stop"],
+                    "time": time.time(),
+                    "signal": sig,
+                    "status": "OPEN"
+                })
                 send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
 📈 {s}
@@ -824,6 +870,29 @@ def loop():
             if now - last_alert.get(s+"_risk",0) > 1800:
                 send(CHAT_ID, f"🔴 RISK｜風險 {s}")
                 last_alert[s+"_risk"] = now
+                
+    # ======================
+    # 🧠 TRACK RESULT（勝率追蹤）
+    # ======================
+    for t in trade_log:
+        if t["status"] != "OPEN":
+            continue
+
+        df_check = get_df(t["symbol"], "5m")
+        if df_check is None:
+            continue
+
+        price = df_check["Close"].iloc[-1]
+
+        if price >= t["target"]:
+            t["status"] = "WIN"
+
+        elif price <= t["stop"]:
+            t["status"] = "LOSS" 
+            
+            d_check = calc(df_check)
+            if d_check:
+                t["rsi"] = d_check["rsi"]
             
     # ======================
     # 🚀 TOP SIGNAL（升級UI）
