@@ -124,7 +124,12 @@ def get_news(symbol):
 def get_df(symbol, interval):
     key = f"{symbol}_{interval}"
     now = time.time()
-
+    
+    if interval == "1d":
+        period = "1y"   # 🔥 長線要多數據
+    else:
+        period = "2d"
+    
     if key in cache:
         data, ts = cache[key]
         if now - ts < CACHE_TTL:
