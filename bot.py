@@ -380,7 +380,7 @@ def signal_engine(df, d):
     better_support is not None and
     better_support * 0.993 <= price <= better_support * 1.007 and
     momentum_shift and
-    structure_shift
+    structure_shift and
     trend_ok
 )
     # breakout 後回踩
