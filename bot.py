@@ -658,7 +658,7 @@ def loop():
         # ======================
         # 🔥 EXECUTION FILTER（新）
         # ======================
-        valid_signal = any(x in sig for x in ["PULLBACK", "RETEST", "ENTRY"])
+        valid_signal = any(x in sig for x in ["PULLBACK", "RETEST"])
 
         if not valid_signal:
             continue
