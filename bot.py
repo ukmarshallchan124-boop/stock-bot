@@ -179,6 +179,8 @@ def calc(df):
 )))
 
     rsi = round(rsi_series.iloc[-1], 1)
+    support, resistance = get_zones(df)
+    
     # ======================
     # 🧱 SUPPORT ZONE（新）
     # ======================
