@@ -161,12 +161,6 @@ def calc(df):
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     trend_up = price > ma20  # 趨勢 Trend
 
-    high = float(df["High"].max())
-    low = float(df["Low"].min())
-
-
-    risk = entry_low - stop
-    rr = (target - entry_low) / risk if risk > 0 else 0  # Risk Reward
 
     # RSI
     rsi_series = 100 - (100 / (1 + (
