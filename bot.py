@@ -378,13 +378,19 @@ def signal_engine(df, d):
     # ======================
     breakout = price > recent_high
     breakdown = price < recent_low
-
+    # ======================
+    # 🔥 momentum
+    # ======================
+    momentum_shift = (
+    df["Close"].iloc[-1] > df["Close"].iloc[-2] and
+    df["Close"].iloc[-1] > df["Open"].iloc[-1]
+)
     # ======================
     # 🔥 Pullback Entry（核心）
     # ======================
     pullback_support = (
     valid_support and
-    better_support * 0.995 <= price <= better_support * 1.005 and
+    better_support * 0.993 <= price <= better_support * 1.007and
     df["Close"].iloc[-1] > df["Close"].iloc[-2] and
     structure_shift
 )
@@ -392,7 +398,7 @@ def signal_engine(df, d):
     breakout_retest = (
     df["Close"].iloc[-3] > recent_high and
     df["Close"].iloc[-2] > recent_high and
-    support[0] <= price <= support[1]
+    recent_high * 0.995 <= price <= recent_high * 1.005
 )
     # ======================
     # 🚫 唔追 breakout
