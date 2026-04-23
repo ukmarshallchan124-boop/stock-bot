@@ -849,7 +849,7 @@ def loop():
         score = score_signal(df, d, sig, sentiment)
 
         if vol.iloc[-1] < vol_ma * 0.5:
-            score -= 0.5
+            score -= 0.3
         
         if volume_spike:
             score += 1
@@ -967,7 +967,9 @@ def loop():
         if last_alert.get(s+"_entry_lock"):
             continue
         
-        
+        if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
+            countinue
+            
         if s in trade_log and trade_log[s]["status"] == "OPEN":
             continue
             
@@ -984,13 +986,11 @@ def loop():
                         "status": "OPEN",
                         "size": size
                 }
-        
-            if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
-                continue       
-        
+                
                 last_alert[s+"_entry_lock"] = time.time()
+                 
         
-        if len(trade_log) > 200:
+                if len(trade_log) > 200:
                     oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
                     del trade_log[oldest]
                 
@@ -1042,12 +1042,12 @@ def loop():
                 continue
 
                 # ⛑️ 防卡死
-        timeout = 7200 if t["entry"] < 200 else 10800
+            timeout = 7200 if t["entry"] < 200 else 10800
 
-        if time.time() - t["time"] > timeout:
-            t["status"] = "TIMEOUT"
-            last_alert[symbol+"_entry_lock"] = 0
-            continue
+            if time.time() - t["time"] > timeout:
+                t["status"] = "TIMEOUT"
+                last_alert[symbol+"_entry_lock"] = 0
+                continue
             
             df_check = get_df(symbol, "5m")
             if df_check is None:
