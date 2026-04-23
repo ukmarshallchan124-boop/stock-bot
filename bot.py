@@ -904,11 +904,11 @@ def loop():
         # ======================
         # ⭐ 分數過濾
         # ======================
-        if score < 3.8:
-            continue
-            
         if not allow_trade:
             score -= 2
+        
+        if score < 3.8:
+            continue
             
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
 
@@ -968,6 +968,9 @@ def loop():
         # 🟢 ENTRY ALERT（升級）
         # ======================
         open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
+        
+        if open_trades >= 3:
+            continue
 
         if now - last_alert.get(s+"_entry",0) < 900:
             continue
@@ -1082,17 +1085,17 @@ def loop():
             # ======================
             # 🚀 TOP SIGNAL（升級UI）
             # ======================
-        if candidates:
-            s, d, score, sig, news, senti_text, volume_spike = sorted(
-            candidates, key=lambda x: x[2], reverse=True
-            )[0]
+    if candidates:
+        s, d, score, sig, news, senti_text, volume_spike = sorted(
+        candidates, key=lambda x: x[2], reverse=True
+        )[0]
 
-            vol_tag = "🔥 Volume爆發" if volume_spike else ""
-            zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
-            tags = " ".join(filter(None, [vol_tag, zone_tag]))
+        vol_tag = "🔥 Volume爆發" if volume_spike else ""
+        zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
+        tags = " ".join(filter(None, [vol_tag, zone_tag]))
         
-            if now - last_alert.get(s,0) > 600:
-                send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會】
+        if now - last_alert.get(s,0) > 600:
+            send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會】
 
 📈 {s}
 💰 價格：{round(d['price'],2)}
@@ -1126,7 +1129,7 @@ def loop():
 
 ━━━━━━━━━━━━━━
 """)
-                last_alert[s] = now
+            last_alert[s] = now
                 
 
     wins = sum(1 for t in trade_log.values() if t["status"] == "WIN")
