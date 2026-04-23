@@ -301,7 +301,7 @@ def is_bad_setup(d):
         return True
 
     # 🧠 根據過去輸嘅 pattern 避開
-    ecent_losses = [t for t in trade_log.values() if t["status"] == "LOSS"][-5:]
+    recent_losses = [t for t in trade_log.values() if t["status"] == "LOSS"][-5:]
 
     if len(recent_losses) >= 3:
         avg_loss_rsi = sum(t.get("rsi",50) for t in recent_losses[-3:]) / 3
@@ -776,20 +776,14 @@ def loop():
         mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
         risk = mid_entry - d["exec_stop"]
         
-        if allow_trade:
-            if d["rsi"] > 60:
-                rr_multiplier = 3   # momentum 強 → 加碼
-            else:
-                rr_multiplier = 2.2
-        else:
-            rr_multiplier = 1.3 
             
         # =======================    
-        # 🔥 RR adaptive override
-        # =======================
-        d["exec_target"] = mid_entry + risk * rr_multiplier
-        d["rr"] = (d["exec_target"] - mid_entry) / risk if risk > 0 else 0
-        d["rr"] = min(d["rr"], 5)
+        # 🔥 Position sizing
+        # ======================= 
+        if allow_trade:
+            size = 1.0 if d["rsi"] < 60 else 1.5
+        else:
+            size = 0.5
         
         # =======================
         # ❌ RR 太低直接 skip
@@ -836,8 +830,6 @@ def loop():
         
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
 
-        if vol.iloc[-1] < vol_ma * 0.5:
-            continue
 
         # ======================
         # 📰 新聞 + 情緒
@@ -849,15 +841,18 @@ def loop():
         # ❌ 避免橫行市場（Sideway Filter）
         # ======================
         range_pct = (df["High"].iloc[-20:].max() - df["Low"].iloc[-20:].min()) / d["price"]
-
-        if range_pct < 0.008:
-            continue
             
         # ======================
         # ⭐ 評分
         # ======================
         score = score_signal(df, d, sig, sentiment)
-        
+
+        if vol.iloc[-1] < vol_ma * 0.5:
+            score -= 1
+            
+        if range_pct < 0.006:
+            score -= 1
+            
         # ======================
         # 🛑 RISK CONTROL（新）
         # ======================
@@ -1066,7 +1061,7 @@ def loop():
             d_check = calc(df_check)
             if d_check:
                 t["rsi"] = d_check["rsi"]
-                
+            
             
             # ======================
             # 🚀 TOP SIGNAL（升級UI）
@@ -1116,6 +1111,15 @@ def loop():
 ━━━━━━━━━━━━━━
 """)
                 last_alert[s] = now
+                
+
+    wins = sum(1 for t in trade_log.values() if t["status"] == "WIN")
+    losses = sum(1 for t in trade_log.values() if t["status"] == "LOSS")
+
+    total = wins + losses
+    winrate = wins / total if total > 0 else 0
+
+    print(f"WINRATE: {round(winrate*100,1)}% ({wins}/{total})")   
 
 # ======================
 # AUTO LOOP
