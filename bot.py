@@ -758,18 +758,22 @@ def loop():
     open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
     
     total_risk = sum(
-    (t["entry"] - t["stop"]) / t["entry"]
+    ((t["entry"] - t["stop"]) / t["entry"]) * t.get("size",1)
     for t in trade_log.values()
     if t["status"] == "OPEN"
 )
 
-    if total_risk > 0.05:   # 最多 5%
-        break
+    if total_risk > 0.05:
+        allow_trade = False # 最多 5%
     
     # =======================
     # 🌍 市場狀態
     # =======================
     allow_trade, market_msg = market_filter()
+    
+    if total_risk > 0.05:
+    allow_trade = False
+    market_msg += "\n⚠️ Risk cap reached"
 
     candidates = []
 
@@ -978,14 +982,20 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
-        
+        current_open = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
+
+        if current_open >= 3:
+            continue
+            
         if open_trades >= 3:
-            break
+            continue
 
         if now - last_alert.get(s+"_entry",0) < 900:
             continue
         
-        if last_alert.get(s+"_entry_lock") and time.time() - last_alert[s+"_entry_lock"] < 1800:
+        lock_time = last_alert.get(s+"_entry_lock", 0)
+
+        if time.time() - lock_time < 1800:
             continue   
             
         if s in trade_log and trade_log[s]["status"] == "OPEN":
@@ -994,7 +1004,16 @@ def loop():
         if not (d["exec_entry_low"]*0.997 <= d["price"] <= d["exec_entry_high"]*1.003):
             continue    
         
-        if any(x in sig for x in ["PULLBACK", "RETEST"]):
+        mid = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
+
+        if abs(d["price"] - mid) / mid > 0.003:
+            continue
+            
+        if (
+            any(x in sig for x in ["PULLBACK", "RETEST"])
+            and sentiment != "NEGATIVE"
+            and d["rsi"] < 65
+        ):
                     
             trade_log[s] = {
                 "entry": d["price"],
@@ -1005,9 +1024,9 @@ def loop():
                 "status": "OPEN",
                 "size": size
             }
-                
+             
             last_alert[s+"_entry_lock"] = time.time()
-                 
+            open_trades += 1  
         
             if len(trade_log) > 200:
                 oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
@@ -1053,6 +1072,21 @@ def loop():
             
                 last_alert[s+"_risk"] = now
                 
+        # ======================
+        # 🧠 TRAILING STOP（新）
+        # ======================
+
+        risk = t["entry"] - t["stop"]
+
+        # break-even（回本）
+        if price > t["entry"] + risk:
+            t["stop"] = t["entry"]
+
+        # trail profit（鎖利潤）
+        if price > t["entry"] + 2*risk:
+            t["stop"] = price - risk   
+
+
             # ======================
             # 🧠 TRACK RESULT（勝率追蹤）
             # ======================
