@@ -967,6 +967,8 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
+        open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
+
         if now - last_alert.get(s+"_entry",0) < 900:
             continue
         
