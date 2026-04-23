@@ -904,7 +904,7 @@ def loop():
         # ======================
         # ⭐ 分數過濾
         # ======================
-        if score < 4:
+        if score < 4.5:
             continue
 
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
@@ -964,37 +964,38 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
-        if last_alert.get(s+"_entry_lock"):
+        if now - last_alert.get(s+"_entry",0) < 1800:
             continue
         
-        if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
-            continue
+        if time.time() - last_alert.get(s+"_entry_lock",0) > 1800:
+            continue   
             
         if s in trade_log and trade_log[s]["status"] == "OPEN":
             continue
-            
+        
+        if not (d["exec_entry_low"]*0.997 <= d["price"] <= d["exec_entry_high"]*1.003):
+            continue    
+        
         if any(x in sig for x in ["PULLBACK", "RETEST"]):
-
-            if now - last_alert.get(s+"_entry",0) > 1800:
                     
-                    trade_log[s] = {
-                        "entry": d["price"],
-                        "target": d["exec_target"],
-                        "stop": d["exec_stop"],
-                        "time": time.time(),
-                        "signal": sig,
-                        "status": "OPEN",
-                        "size": size
-                }
+            trade_log[s] = {
+                "entry": d["price"],
+                "target": d["exec_target"],
+                "stop": d["exec_stop"],
+                "time": time.time(),
+                "signal": sig,
+                "status": "OPEN",
+                "size": size
+            }
                 
-                last_alert[s+"_entry_lock"] = time.time()
+            last_alert[s+"_entry_lock"] = time.time()
                  
         
-                if len(trade_log) > 200:
-                    oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
-                    del trade_log[oldest]
+        if len(trade_log) > 200:
+            oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
+            del trade_log[oldest]
                 
-                send(CHAT_ID, f"""🟢【ENTRY｜入場】
+        send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
 📈 {s}
 💰 價格：{round(d['price'],2)}
@@ -1021,7 +1022,7 @@ def loop():
 
 ━━━━━━━━━━
 """)
-                last_alert[s+"_entry"] = now
+        last_alert[s+"_entry"] = now
                 
 
         
@@ -1038,12 +1039,17 @@ def loop():
             # 🧠 TRACK RESULT（勝率追蹤）
             # ======================
         for symbol, t in trade_log.items():
+            
+            if t["status"] in ["WIN","LOSS","TIMEOUT"]:
+            last_alert[symbol+"_entry_lock"] = 0
+                continue
+            
             if t["status"] != "OPEN":
                 continue
 
-                # ⛑️ 防卡死
+            # ⛑️ 防卡死
             timeout = 7200 if t["entry"] < 200 else 10800
-
+            
             if time.time() - t["time"] > timeout:
                 t["status"] = "TIMEOUT"
                 last_alert[symbol+"_entry_lock"] = 0
