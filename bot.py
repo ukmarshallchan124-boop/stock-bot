@@ -850,9 +850,6 @@ def loop():
 
         if vol.iloc[-1] < vol_ma * 0.5:
             score -= 0.5
-            
-        if range_pct < 0.006:
-            score -= 1
         
         if volume_spike:
             score += 1
@@ -897,11 +894,6 @@ def loop():
         if not valid_signal:
             continue
             
-        # =======================    
-        # 🔥 Volume 加分
-        # =======================
-        if volume_spike:
-            score += 1
 
         # ======================
         # 🔴 市場過濾
@@ -989,16 +981,16 @@ def loop():
                         "stop": d["exec_stop"],
                         "time": time.time(),
                         "signal": sig,
-                        "status": "OPEN"
+                        "status": "OPEN",
                         "size": size
                 }
-                
-        last_alert[s+"_entry_lock"] = time.time()
         
-        if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
-            continue
-                
-                if len(trade_log) > 200:
+            if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
+                continue       
+        
+                last_alert[s+"_entry_lock"] = time.time()
+        
+        if len(trade_log) > 200:
                     oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
                     del trade_log[oldest]
                 
@@ -1050,10 +1042,12 @@ def loop():
                 continue
 
                 # ⛑️ 防卡死
-            timeout = 7200 if t["entry"] < 200 else 10800
-                t["status"] = "timeout"
-                last_alert[symbol+"_entry_lock"] = False
-                continue
+        timeout = 7200 if t["entry"] < 200 else 10800
+
+        if time.time() - t["time"] > timeout:
+            t["status"] = "TIMEOUT"
+            last_alert[symbol+"_entry_lock"] = 0
+            continue
             
             df_check = get_df(symbol, "5m")
             if df_check is None:
@@ -1063,11 +1057,11 @@ def loop():
 
             if price >= t["target"]:
                 t["status"] = "WIN"
-                last_alert[symbol+"_entry_lock"] = False
+                last_alert[symbol+"_entry_lock"] = 0
             
             elif price <= t["stop"]:
                 t["status"] = "LOSS" 
-                last_alert[symbol+"_entry_lock"] = False
+                last_alert[symbol+"_entry_lock"] = 0
             
             d_check = calc(df_check)
             if d_check:
