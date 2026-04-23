@@ -904,9 +904,12 @@ def loop():
         # ======================
         # ⭐ 分數過濾
         # ======================
-        if score < 4.5:
+        if score < 3.8:
             continue
-
+            
+        if not allow_trade:
+            score -= 2
+            
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
 
         # ======================
@@ -964,7 +967,7 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
-        if now - last_alert.get(s+"_entry",0) < 1800:
+        if now - last_alert.get(s+"_entry",0) < 900:
             continue
         
         if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
@@ -1038,40 +1041,40 @@ def loop():
             # ======================
             # 🧠 TRACK RESULT（勝率追蹤）
             # ======================
-        for symbol, t in trade_log.items():
+    for symbol, t in trade_log.items():
             
-            if t["status"] in ["WIN","LOSS","TIMEOUT"]:
+        if t["status"] in ["WIN","LOSS","TIMEOUT"]:
                 last_alert[symbol+"_entry_lock"] = 0
                 continue
             
-            if t["status"] != "OPEN":
+        if t["status"] != "OPEN":
                 continue
 
             # ⛑️ 防卡死
-            timeout = 7200 if t["entry"] < 200 else 10800
+        timeout = 7200 if t["entry"] < 200 else 10800
             
-            if time.time() - t["time"] > timeout:
-                t["status"] = "TIMEOUT"
-                last_alert[symbol+"_entry_lock"] = 0
-                continue
+        if time.time() - t["time"] > timeout:
+            t["status"] = "TIMEOUT"
+            last_alert[symbol+"_entry_lock"] = 0
+            continue
             
-            df_check = get_df(symbol, "5m")
-            if df_check is None:
-                continue
+        df_check = get_df(symbol, "5m")
+        if df_check is None:
+            continue
 
-            price = df_check["Close"].iloc[-1]
+        price = df_check["Close"].iloc[-1]
 
-            if price >= t["target"]:
-                t["status"] = "WIN"
-                last_alert[symbol+"_entry_lock"] = 0
+        if price >= t["target"]:
+            t["status"] = "WIN"
+            last_alert[symbol+"_entry_lock"] = 0
             
-            elif price <= t["stop"]:
-                t["status"] = "LOSS" 
-                last_alert[symbol+"_entry_lock"] = 0
+        elif price <= t["stop"]:
+            t["status"] = "LOSS" 
+            last_alert[symbol+"_entry_lock"] = 0
             
-            d_check = calc(df_check)
-            if d_check:
-                t["rsi"] = d_check["rsi"]
+        d_check = calc(df_check)
+        if d_check:
+            t["rsi"] = d_check["rsi"]
             
             
             # ======================
@@ -1146,8 +1149,13 @@ def auto_loop():
 # ======================
 # SEND（發送）
 # ======================
-def send(chat_id,msg):
-    requests.post(f"{URL}/sendMessage",json={"chat_id":chat_id,"text":msg[:4000]})
+def send(chat_id, msg):
+    try:
+        requests.post(f"{URL}/sendMessage",
+                      json={"chat_id": chat_id, "text": msg[:4000]},
+                      timeout=5)
+    except:
+        print("SEND ERROR")
 
 # ======================
 # WEBHOOK
