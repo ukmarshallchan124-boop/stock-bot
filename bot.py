@@ -829,7 +829,8 @@ def loop():
         vol_ma = vol.rolling(10).mean().iloc[-1]
         
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
-
+        
+        volatility = df["Close"].pct_change().rolling(20).std().iloc[-1]
 
         # ======================
         # 📰 新聞 + 情緒
@@ -848,9 +849,15 @@ def loop():
         score = score_signal(df, d, sig, sentiment)
 
         if vol.iloc[-1] < vol_ma * 0.5:
-            score -= 1
+            score -= 0.5
             
         if range_pct < 0.006:
+            score -= 1
+        
+        if volume_spike:
+            score += 1
+        
+        if range_pct < volatility * 1.2:
             score -= 1
             
         # ======================
@@ -983,9 +990,13 @@ def loop():
                         "time": time.time(),
                         "signal": sig,
                         "status": "OPEN"
+                        "size": size
                 }
                 
-                last_alert[s+"_entry_lock"] = True
+        last_alert[s+"_entry_lock"] = time.time()
+        
+        if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
+            continue
                 
                 if len(trade_log) > 200:
                     oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
@@ -1039,8 +1050,8 @@ def loop():
                 continue
 
                 # ⛑️ 防卡死
-            if time.time() - t["time"] > 7200:
-                t["status"] = "TIMEOUT"
+            timeout = 7200 if t["entry"] < 200 else 10800
+                t["status"] = "timeout"
                 last_alert[symbol+"_entry_lock"] = False
                 continue
             
