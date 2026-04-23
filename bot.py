@@ -758,7 +758,7 @@ def loop():
     open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
     
     total_risk = sum(
-    ((t["entry"] - t["stop"]) / t["entry"]) * t.get("size",1)
+    ((t["risk"]) / t["entry"]) * t.get("size",1)
     for t in trade_log.values()
     if t["status"] == "OPEN"
 )
@@ -982,6 +982,7 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
+        
         current_open = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
 
         if current_open >= 3:
@@ -1017,11 +1018,11 @@ def loop():
                 "signal": sig,
                 "status": "OPEN",
                 "size": size
+                "risk": d["price"] - d["exec_stop"],
             }
              
             last_alert[s+"_entry_lock"] = time.time()
-            open_trades += 1  
-        
+                    
             if len(trade_log) > 200:
                 oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
                 del trade_log[oldest]
@@ -1097,9 +1098,22 @@ def loop():
         # ======================
         risk = t["entry"] - t["stop"]
 
+        risk = t["risk"]
+
+        old_stop = t["stop"]
+        
+        if not t.get("trail_started") and price > t["entry"] + 2*risk:
+            t["trail_started"] = True
+
+        if t.get("trail_started"):
+            new_stop = price - risk
+            if new_stop > t["stop"]:
+                t["stop"] = new_stop
+        
         # break-even
-        if price > t["entry"] + risk:
+        if not t.get("be_done") and price > t["entry"] + risk:
             t["stop"] = t["entry"]
+            t["be_done"] = True
 
         # trail profit（只可以向上）
         new_stop = price - risk
@@ -1117,6 +1131,13 @@ def loop():
         d_check = calc(df_check)
         if d_check:
             t["rsi"] = d_check["rsi"]
+            
+        if t["stop"] != old_stop:
+            send(CHAT_ID, f"""🔄【STOP UPDATED】
+
+📈 {s}
+🛑 新止損：{round(t["stop"],2)}
+""")
             
             
             # ======================
