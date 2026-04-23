@@ -762,9 +762,6 @@ def loop():
     for t in trade_log.values()
     if t["status"] == "OPEN"
 )
-
-    if total_risk > 0.05:
-        allow_trade = False # 最多 5%
     
     # =======================
     # 🌍 市場狀態
@@ -1096,8 +1093,6 @@ def loop():
         # ======================
         # 🧠 TRAILING STOP
         # ======================
-        risk = t["entry"] - t["stop"]
-
         risk = t["risk"]
 
         old_stop = t["stop"]
@@ -1117,8 +1112,6 @@ def loop():
 
         # trail profit（只可以向上）
         new_stop = price - risk
-        if price > t["entry"] + 2*risk and new_stop > t["stop"]:
-            t["stop"] = new_stop
 
         if price >= t["target"]:
             t["status"] = "WIN"
