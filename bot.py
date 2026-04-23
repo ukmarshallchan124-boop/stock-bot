@@ -968,7 +968,7 @@ def loop():
             continue
         
         if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
-            countinue
+            continue
             
         if s in trade_log and trade_log[s]["status"] == "OPEN":
             continue
