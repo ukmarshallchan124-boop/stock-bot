@@ -991,11 +991,11 @@ def loop():
             last_alert[s+"_entry_lock"] = time.time()
                  
         
-        if len(trade_log) > 200:
-            oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
-            del trade_log[oldest]
-                
-        send(CHAT_ID, f"""🟢【ENTRY｜入場】
+            if len(trade_log) > 200:
+                oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
+                del trade_log[oldest]
+            
+            send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
 📈 {s}
 💰 價格：{round(d['price'],2)}
@@ -1022,7 +1022,7 @@ def loop():
 
 ━━━━━━━━━━
 """)
-        last_alert[s+"_entry"] = now
+            last_alert[s+"_entry"] = now
                 
 
         
