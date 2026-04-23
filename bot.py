@@ -772,8 +772,8 @@ def loop():
     allow_trade, market_msg = market_filter()
     
     if total_risk > 0.05:
-    allow_trade = False
-    market_msg += "\n⚠️ Risk cap reached"
+        allow_trade = False
+        market_msg += "\n⚠️ Risk cap reached"
 
     candidates = []
 
@@ -986,9 +986,6 @@ def loop():
 
         if current_open >= 3:
             continue
-            
-        if open_trades >= 3:
-            continue
 
         if now - last_alert.get(s+"_entry",0) < 900:
             continue
@@ -999,9 +996,6 @@ def loop():
             continue   
             
         if s in trade_log and trade_log[s]["status"] == "OPEN":
-            continue
-        
-        if not (d["exec_entry_low"]*0.997 <= d["price"] <= d["exec_entry_high"]*1.003):
             continue    
         
         mid = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
@@ -1071,21 +1065,6 @@ def loop():
                 send(CHAT_ID, f"🔴 RISK｜風險 {s}")
             
                 last_alert[s+"_risk"] = now
-                
-        # ======================
-        # 🧠 TRAILING STOP（新）
-        # ======================
-
-        risk = t["entry"] - t["stop"]
-
-        # break-even（回本）
-        if price > t["entry"] + risk:
-            t["stop"] = t["entry"]
-
-        # trail profit（鎖利潤）
-        if price > t["entry"] + 2*risk:
-            t["stop"] = price - risk   
-
 
             # ======================
             # 🧠 TRACK RESULT（勝率追蹤）
@@ -1112,6 +1091,20 @@ def loop():
             continue
 
         price = df_check["Close"].iloc[-1]
+
+        # ======================
+        # 🧠 TRAILING STOP
+        # ======================
+        risk = t["entry"] - t["stop"]
+
+        # break-even
+        if price > t["entry"] + risk:
+            t["stop"] = t["entry"]
+
+        # trail profit（只可以向上）
+        new_stop = price - risk
+        if price > t["entry"] + 2*risk and new_stop > t["stop"]:
+            t["stop"] = new_stop
 
         if price >= t["target"]:
             t["status"] = "WIN"
