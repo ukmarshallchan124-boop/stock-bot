@@ -754,6 +754,17 @@ def premarket_plan():
 # ======================
 def loop():
     now = time.time()
+
+    open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
+    
+    total_risk = sum(
+    (t["entry"] - t["stop"]) / t["entry"]
+    for t in trade_log.values()
+    if t["status"] == "OPEN"
+)
+
+    if total_risk > 0.05:   # 最多 5%
+        break
     
     # =======================
     # 🌍 市場狀態
@@ -967,15 +978,14 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
-        open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
         
         if open_trades >= 3:
-            continue
+            break
 
         if now - last_alert.get(s+"_entry",0) < 900:
             continue
         
-        if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
+        if last_alert.get(s+"_entry_lock") and time.time() - last_alert[s+"_entry_lock"] < 1800:
             continue   
             
         if s in trade_log and trade_log[s]["status"] == "OPEN":
@@ -1049,11 +1059,11 @@ def loop():
     for symbol, t in trade_log.items():
             
         if t["status"] in ["WIN","LOSS","TIMEOUT"]:
-                last_alert[symbol+"_entry_lock"] = 0
-                continue
+            last_alert[symbol+"_entry_lock"] = 0
+            continue
             
         if t["status"] != "OPEN":
-                continue
+            continue
 
             # ⛑️ 防卡死
         timeout = 7200 if t["entry"] < 200 else 10800
