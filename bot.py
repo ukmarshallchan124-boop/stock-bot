@@ -964,7 +964,7 @@ def loop():
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
-        if now - last_alert.get(s+"_entry",0) > 1800:
+        if now - last_alert.get(s+"_entry",0) < 1800:
             continue
         
         if time.time() - last_alert.get(s+"_entry_lock",0) < 1800:
@@ -1041,7 +1041,7 @@ def loop():
         for symbol, t in trade_log.items():
             
             if t["status"] in ["WIN","LOSS","TIMEOUT"]:
-            last_alert[symbol+"_entry_lock"] = 0
+                last_alert[symbol+"_entry_lock"] = 0
                 continue
             
             if t["status"] != "OPEN":
