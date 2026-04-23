@@ -1017,8 +1017,8 @@ def loop():
                 "time": time.time(),
                 "signal": sig,
                 "status": "OPEN",
-                "size": size
-                "risk": d["price"] - d["exec_stop"],
+                "size": size,
+                "risk": d["price"] - d["exec_stop"]
             }
              
             last_alert[s+"_entry_lock"] = time.time()
@@ -1135,7 +1135,7 @@ def loop():
         if t["stop"] != old_stop:
             send(CHAT_ID, f"""🔄【STOP UPDATED】
 
-📈 {s}
+📈 {symbol}
 🛑 新止損：{round(t["stop"],2)}
 """)
             
