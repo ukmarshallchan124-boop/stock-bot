@@ -754,7 +754,13 @@ def premarket_plan():
 # ======================
 def loop():
     now = time.time()
+    
+    sig = signal_engine(df, d)
+       
+    print("DEBUG:", s, sig, round(d["rsi"],1), "RR:", round(d["rr"],2))
 
+    print("LOOP RUNNING...")
+    
     open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
     
     total_risk = sum(
@@ -806,10 +812,6 @@ def loop():
         if is_bad_setup(d):
             continue
             
-        sig = signal_engine(df, d)
-       
-        print("DEBUG:", s, sig, round(d["rsi"],1), "RR:", round(d["rr"],2))
-
         # ======================
         # 🔥 多時間框架確認（新）
         # ======================
