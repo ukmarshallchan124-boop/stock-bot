@@ -807,6 +807,8 @@ def loop():
             continue
             
         sig = signal_engine(df, d)
+       
+        print("DEBUG:", s, sig, round(d["rsi"],1), "RR:", round(d["rr"],2))
 
         # ======================
         # 🔥 多時間框架確認（新）
