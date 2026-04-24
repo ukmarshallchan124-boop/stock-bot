@@ -919,7 +919,7 @@ def loop():
         if not allow_trade:
             score -= 2
         
-        if score < 3.8:
+        if score < 2.8:
             continue
             
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
