@@ -817,10 +817,8 @@ def loop():
         df["Low"].iloc[-1] > df["Low"].iloc[-5] and
         df["High"].iloc[-1] > df["High"].iloc[-5]
         )
-        if not trend_15:
-            continue
-        
-        if not structure_ok:
+     
+        if not trent_15 and not structure_ok:
             continue
     
         # ======================
@@ -897,16 +895,7 @@ def loop():
         # =======================
         if hour == 13 and minute >= 30:
             continue
-       
-        # ======================
-        # 🔥 EXECUTION FILTER（新）
-        # ======================
-        valid_signal = any(x in sig for x in ["PULLBACK", "RETEST", "吸貨確認"])
-
-        if not valid_signal:
-            continue
             
-
         # ======================
         # 🔴 市場過濾
         # ======================
@@ -998,7 +987,7 @@ def loop():
         
         mid = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
 
-        if abs(d["price"] - mid) / mid > 0.003:
+        if abs(d["price"] - mid) / mid > 0.01:
             continue
             
         if (
