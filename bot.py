@@ -300,9 +300,11 @@ def is_bad_setup(d):
         return True
 
     # 🧠 根據過去輸嘅 pattern 避開
-    recent_losses = [t for t in trade_log.values() if t["status"] == "LOSS"][-5:]
+    recent_losses = [t for t in trade_log.values() if t["status"] == "LOSS"][-3:]
 
     if len(recent_losses) >= 3:
+        contiune
+        
         avg_loss_rsi = sum(t.get("rsi",50) for t in recent_losses[-3:]) / 3
 
         # 如果而家 RSI 接近過去輸嘅區域 → 避
@@ -751,22 +753,6 @@ def premarket_plan():
 # ======================
 # 🚀 LOOP（升級完整版）
 # ======================
-def loop():
-    if not is_market_open():
-        return
-        
-    now = time.time()
-       
-    print("LOOP RUNNING...")
-    
-    open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
-    
-    total_risk = sum(
-    ((t["risk"]) / t["entry"]) * t.get("size",1)
-    for t in trade_log.values()
-    if t["status"] == "OPEN"
-)
-
 def is_market_open():
     now = time.gmtime()
 
@@ -789,12 +775,32 @@ def is_market_open():
 
     return True
     
+def loop():
+    if not is_market_open():
+        return
+        
+    now = time.time()
+       
+    print("LOOP RUNNING...")
+    
+    open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
+    
+    total_risk = sum(
+    ((t["risk"]) / t["entry"]) * t.get("size",1)
+    for t in trade_log.values()
+    if t["status"] == "OPEN"
+)
+    
     # =======================
     # 🌍 市場狀態
     # =======================
     allow_trade, market_msg = market_filter()
     
-    if total_risk > 0.05:
+    if total_risk > 0.03:
+        size = 0.5
+    elif total_risk > 0.05:
+        continue
+        
         allow_trade = False
         market_msg += "\n⚠️ Risk cap reached"
 
@@ -829,7 +835,7 @@ def is_market_open():
         # =======================
         # ❌ RR 太低直接 skip
         # =======================
-        if d["rr"] < 1.5:
+        if d["rr"] < 1.8:
             continue
         
         if is_bad_setup(d):
@@ -845,9 +851,11 @@ def is_market_open():
         df["High"].iloc[-1] > df["High"].iloc[-5]
         )
      
-        if not trend_15 and not structure_ok:
+        if not trend_15:
             continue
-    
+
+        if not structure_ok:
+            score -= 1
         # ======================
         # 🔥 Fake Breakout Filter（新）
         # ======================
@@ -898,7 +906,7 @@ def is_market_open():
         # ======================
         # ❌ 止損太遠（輸太多）
         # ======================
-        if (d["price"] - d["exec_stop"]) / d["price"] > 0.05:
+        if (d["price"] - d["exec_stop"]) / d["price"] > 0.035:
             continue
         
         # ==========================
@@ -920,13 +928,15 @@ def is_market_open():
         if not allow_trade:
             score -= 1   # 唔係 skip
 
+        if not allow_trade and score < 4.5:
+            continue
+            
         # ======================
         # ⭐ 分數過濾
         # ======================
-        if not allow_trade:
-            score -= 2
+
         
-        if score < 2.8:
+        if score < 3.0:
             continue
             
         candidates.append((s, d, score, sig, news, senti_text, volume_spike))
@@ -989,7 +999,7 @@ def is_market_open():
         
         current_open = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
 
-        if current_open >= 3:
+        if current_open >= 2:
             continue
 
         if now - last_alert.get(s+"_entry",0) < 900:
@@ -1005,7 +1015,7 @@ def is_market_open():
         
         mid = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
 
-        if abs(d["price"] - mid) / mid > 0.01:
+        if abs(d["price"] - mid) / mid > 0.004:
             continue
             
         if (
