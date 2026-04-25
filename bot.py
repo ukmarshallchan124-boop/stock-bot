@@ -754,8 +754,6 @@ def premarket_plan():
 def loop():
     now = time.time()
        
-    print("DEBUG:", s, sig, round(d["rsi"],1), "RR:", round(d["rr"],2))
-
     print("LOOP RUNNING...")
     
     open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
@@ -789,7 +787,8 @@ def loop():
             continue
 
         sig = signal_engine(df, d)
-            
+        print("DEBUG:", s, sig, round(d["rsi"],1), "RR:", round(d["rr"],2))
+    
         mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
         risk = mid_entry - d["exec_stop"]
         
@@ -821,7 +820,7 @@ def loop():
         df["High"].iloc[-1] > df["High"].iloc[-5]
         )
      
-        if not trent_15 and not structure_ok:
+        if not trend_15 and not structure_ok:
             continue
     
         # ======================
@@ -870,11 +869,6 @@ def loop():
         if range_pct < volatility * 1.2:
             score -= 1
             
-        # ======================
-        # ❌ RR 太低唔玩
-        # ======================
-        if d["rr"] < 1.5:
-            continue
             
         # ======================
         # ❌ 止損太遠（輸太多）
@@ -898,8 +892,8 @@ def loop():
         # ======================
         # 🔴 市場過濾
         # ======================
-        if not allow_trade and ("ENTRY" in sig or "PULLBACK" in sig or "RETEST" in sig):
-             continue
+        if not allow_trade:
+            score -= 1   # 唔係 skip
 
         # ======================
         # ⭐ 分數過濾
