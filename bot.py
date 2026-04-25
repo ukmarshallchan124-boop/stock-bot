@@ -772,13 +772,12 @@ def loop():
     
     if not is_market_open():
         return
-        
+    
     now = time.time()    
     now_local = time.localtime()
 
     print("LOOP RUNNING...")
     
-
 
     trade_log = {
         k:v for k,v in trade_log.items()
@@ -787,16 +786,14 @@ def loop():
     
     current_open = sum(
         1 for t in trade_log.values() if t["status"] == "OPEN"
-    )    
-
+    )
+    
     total_risk = sum(
         (t["risk"] / t["entry"]) * t.get("size",1)
         for t in trade_log.values()
         if t["status"] == "OPEN"
     )
             
-    risk_pct = t["risk"] / t["entry"]
-
     # ======================
     # 🧠 CAPITAL CONTROL
     # ======================
@@ -973,7 +970,7 @@ def loop():
             ) / ((zone_high + zone_low) / 2)
 
         # 🔥 再 check（你原本想做嘅）
-        if distance_entry is not None and distance_entry < 0.01:
+        if distance_entry < 0.01:
             if now - last_alert.get(s+"_near",0) > 900:
                 send(CHAT_ID, f"""⚠️【接近入場】
 
@@ -1014,16 +1011,11 @@ def loop():
         # 🟢 ENTRY ALERT（升級）
         # ======================
         
-        dist_text = round(distance_entry*100,2) if distance_entry is not None else "N/A"
-        
+        dist_text = round(distance_entry*100,2)
+
         if current_open >= 2:
-            allow_entry = False
-        else:
-            allow_entry = True
-
-         if not allow_entry:
             continue
-
+            
         if now - last_alert.get(s+"_entry",0) < 900:
             continue
         
@@ -1037,13 +1029,15 @@ def loop():
         
         mid = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
 
-        if abs(d["price"] - mid) / mid > 0.004:
+        if abs(d["price"] - mid) / mid > 0.012:
             continue
             
         if (
             any(x in sig for x in ["PULLBACK", "RETEST"])
-            and sentiment != "NEGATIVE"
+            and sentiment in ["POSITIVE","NEUTRAL"]
             and d["rsi"] < 65
+            and df["Close"].iloc[-1] > df["Close"].iloc[-2]
+            
         ):
                     
             trade_log[s] = {
@@ -1056,8 +1050,7 @@ def loop():
                 "size": size,
                 "risk": d["price"] - d["exec_stop"]
             }
-            current_open += 1
-            
+                        
             last_alert[s+"_entry_lock"] = time.time()
                     
             if len(trade_log) > 200:
@@ -1108,7 +1101,10 @@ def loop():
             # ======================
             # 🧠 TRACK RESULT（勝率追蹤）
             # ======================
-    for symbol, t in trade_log.items():
+    for symbol, t in list(trade_log.items()):
+        
+        if time.time() - last_alert.get(symbol+"_entry_lock",0) > 7200:
+            last_alert[symbol+"_entry_lock"] = 0
             
         if t["status"] in ["WIN","LOSS","TIMEOUT"]:
             last_alert[symbol+"_entry_lock"] = 0
@@ -1116,56 +1112,101 @@ def loop():
             
         if t["status"] != "OPEN":
             continue
-
-            # ⛑️ 防卡死
-        timeout = 7200 if t["entry"] < 200 else 10800
             
-        if time.time() - t["time"] > timeout:
-            t["status"] = "TIMEOUT"
-            last_alert[symbol+"_entry_lock"] = 0
-            continue
-            
+        # ======================
+        # ⛑️ 防卡死
+        # ======================
+        exit_price = None
+        
         df_check = get_df(symbol, "5m")
         if df_check is None:
             continue
 
-        price = df_check["Close"].iloc[-1]
-
+        current_price = df_check["Close"].iloc[-1]
+        
+        timeout = 7200 if t["entry"] < 200 else 10800
+        
+        if time.time() - t["time"] > timeout:
+            t["status"] = "TIMEOUT"
+            last_alert[symbol+"_entry_lock"] = 0
+            exit_price = t["stop"]
+            
+            if t.get("R") is None:
+                r = (exit_price - t["entry"]) / t["risk"]
+                t["R"] = r
+                t["R_size"] = r * t.get("size",1)
+                t["exit_price"] = exit_price
+                
+            continue
+            
         # ======================
         # 🧠 TRAILING STOP
         # ======================
         risk = t["risk"]
-
-        old_stop = t["stop"]
         
-        if not t.get("trail_started") and price > t["entry"] + 2*risk:
+        if risk <= 0:
+            continue
+            
+        old_stop = t["stop"]
+
+        current_R = (current_price - t["entry"]) / risk
+            
+        # ======================
+        # 🟡 BE（+1R）
+        # ======================
+        if not t.get("be_done") and current_R >= 1:
+            t["stop"] = t["entry"] + t["risk"] * 0.1
+            t["be_done"] = True
+            
+        if current_R >= 2:
             t["trail_started"] = True
 
         if t.get("trail_started"):
-            new_stop = price - risk
+            new_stop = max(t["stop"], current_price - risk * 0.8)
             if new_stop > t["stop"]:
                 t["stop"] = new_stop
-        
-        # break-even
-        if not t.get("be_done") and price > t["entry"] + risk:
-            t["stop"] = t["entry"]
-            t["be_done"] = True
 
-        # trail profit（只可以向上）
-        new_stop = price - risk
+        # ======================
+        # 🎯 EXIT（只限 OPEN）
+        # ======================
+        if t["status"] == "OPEN":
+            
+            if current_price >= t["target"]:
+                t["status"] = "WIN"
+                last_alert[symbol+"_entry_lock"] = 0
+                exit_price = t["target"]
 
-        if price >= t["target"]:
-            t["status"] = "WIN"
-            last_alert[symbol+"_entry_lock"] = 0
-            
-        elif price <= t["stop"]:
-            t["status"] = "LOSS" 
-            last_alert[symbol+"_entry_lock"] = 0
-            
+            elif current_price <= t["stop"]:
+                t["status"] = "LOSS"
+                last_alert[symbol+"_entry_lock"] = 0
+                exit_price = t["stop"]
+                
+
+        # ======================
+        # 📊 記錄 R（只做一次）
+        # ======================
+        if exit_price is not None and t.get("R") is None:
+            entry = t["entry"]
+            risk = t["risk"]
+
+            r = (exit_price - entry) / risk
+
+            r_size = r * t.get("size",1)
+            t["R"] = r
+            t["R_size"] = r_size
+            t["exit_price"] = exit_price
+
+        # ======================
+        # 📈 更新 RSI
+        # ======================
         d_check = calc(df_check)
         if d_check:
             t["rsi"] = d_check["rsi"]
-            
+
+
+        # ======================
+        # 🔄 STOP 更新通知
+        # ======================
         if t["stop"] != old_stop:
             send(CHAT_ID, f"""🔄【STOP UPDATED】
 
@@ -1176,19 +1217,21 @@ def loop():
             
             # ======================
             # 🚀 TOP SIGNAL（升級UI）
-            # ======================   
-    if candidates:
+            # ======================
+    if candidates and current_open == 0:
         s, d, score, sig, news, senti_text, volume_spike = sorted(
             candidates, key=lambda x: x[2], reverse=True
         )[0]
-        
-        show_signal = current_open < 2
-
-        vol_tag = "🔥 Volume爆發" if volume_spike else ""
-        zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
-        tags = " ".join(filter(None, [vol_tag, zone_tag]))
-        
+        if s in trade_log and trade_log[s]["status"] == "OPEN":
+            return
+            
         if now - last_alert.get(s,0) > 600:
+
+            vol_tag = "🔥 Volume爆發" if volume_spike else ""
+            zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
+            tags = " ".join(filter(None, [vol_tag, zone_tag]))
+        
+            
             send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會】
 
 📈 {s}
@@ -1232,7 +1275,28 @@ def loop():
     total = wins + losses
     winrate = wins / total if total > 0 else 0
 
-    print(f"WINRATE: {round(winrate*100,1)}% ({wins}/{total})")   
+    print(f"WINRATE: {round(winrate*100,1)}% ({wins}/{total})")
+    # ======================
+    # 📊 EXPECTANCY
+    # ======================
+    recent_trades = [
+        t for t in trade_log.values()
+        if "exit_price" in t and time.time() - t["time"] < 86400
+    ]
+
+    
+    wins_R = [t["R"] for t in recent_trades if t["R"] > 0]
+    losses_R = [t["R"] for t in recent_trades if t["R"] < 0]
+
+    if wins_R and losses_R:
+        avg_win = sum(wins_R)/len(wins_R)
+        avg_loss = abs(sum(losses_R)/len(losses_R))
+        winrate_R = len(wins_R) / (len(wins_R) + len(losses_R))
+
+        expectancy = (winrate_R * avg_win) - ((1-winrate_R) * avg_loss)
+
+        print(f"EXP: {round(expectancy,2)}R | AVG WIN: {round(avg_win,2)} | AVG LOSS: {round(avg_loss,2)}")
+
 
 # ======================
 # AUTO LOOP
