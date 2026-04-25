@@ -295,22 +295,8 @@ def candle_type(df):
     # Fake Signal
     # ============
 def is_bad_setup(d):
-    # 基本 filter
     if d["rsi"] > 70 or d["rsi"] < 40:
         return True
-
-    # 🧠 根據過去輸嘅 pattern 避開
-    recent_losses = [t for t in trade_log.values() if t["status"] == "LOSS"][-3:]
-
-    if len(recent_losses) >= 3:
-        continue
-        
-        avg_loss_rsi = sum(t.get("rsi",50) for t in recent_losses[-3:]) / 3
-
-        # 如果而家 RSI 接近過去輸嘅區域 → 避
-        if abs(d["rsi"] - avg_loss_rsi) < 5:
-            return True
-
     return False
     
 # =========================================================
@@ -751,10 +737,13 @@ def premarket_plan():
     return msg
 
 # ======================
-# 🚀 LOOP（升級完整版）
+# market open
 # ======================
 def is_market_open():
-    now = time.gmtime()
+    now_local = time.localtime()
+    
+    if now_local.tm_hour == 14 and now_local.tm_min < 30:
+        return False
 
     # 轉英國時間（BST / GMT 自動）
     uk_time = time.localtime()
@@ -775,46 +764,71 @@ def is_market_open():
 
     return True
     
+# ======================
+# 🚀 LOOP（升級完整版）
+# ======================
 def loop():
+    global trade_log
+    
     if not is_market_open():
         return
         
-    now = time.time()
-       
+    now = time.time()    
+    now_local = time.localtime()
+
     print("LOOP RUNNING...")
     
-    open_trades = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
+
+
+    trade_log = {
+        k:v for k,v in trade_log.items()
+        if time.time() - v["time"] < 86400
+    }
     
+    current_open = sum(
+        1 for t in trade_log.values() if t["status"] == "OPEN"
+    )    
+
     total_risk = sum(
-    ((t["risk"]) / t["entry"]) * t.get("size",1)
-    for t in trade_log.values()
-    if t["status"] == "OPEN"
-)
-    
+        (t["risk"] / t["entry"]) * t.get("size",1)
+        for t in trade_log.values()
+        if t["status"] == "OPEN"
+    )
+            
+    risk_pct = t["risk"] / t["entry"]
+
+    # ======================
+    # 🧠 CAPITAL CONTROL
+    # ======================
+
+    recent_losses = [t for t in trade_log.values() if t["status"] == "LOSS"][-3:]
+
     # =======================
     # 🌍 市場狀態
     # =======================
     allow_trade, market_msg = market_filter()
     
+    if len(recent_losses) == 3:
+        allow_trade = False
+        print("⛔ Cooldown active")
+    # =======================
+    # 🧠 RISK MODE（乾淨版）
+    # =======================    
     if total_risk > 0.05:
-        return   
+        allow_trade = False
+        risk_mode = "LOW"
+        market_msg += "\n⛔ Risk cap hit"
         
     elif total_risk > 0.03:
         risk_mode = "LOW"
+        market_msg += "\n⚠️ Risk reducing"
     else:
         risk_mode = "NORMAL"
-        
-    if risk_mode == "LOW":
-        size = 0.5
-    else:
-        size = 1.0 if d["rsi"] < 60 else 1.5
-        
-        allow_trade = False
-        market_msg += "\n⚠️ Risk cap reached"
 
     candidates = []
 
     for s in SYMBOLS:
+        
         df = get_df(s,"5m")
         df15 = get_df(s,"15m")
 
@@ -832,13 +846,16 @@ def loop():
         risk = mid_entry - d["exec_stop"]
         
             
-        # =======================    
-        # 🔥 Position sizing
-        # ======================= 
-        if allow_trade:
+        # ======================
+        # 🔥 Position sizing（正確版）
+        # ======================
+        if risk_mode == "LOW":
+            size = 0.5
+        elif allow_trade:
             size = 1.0 if d["rsi"] < 60 else 1.5
         else:
             size = 0.5
+
         
         # =======================
         # ❌ RR 太低直接 skip
@@ -854,24 +871,15 @@ def loop():
         # ======================
         ma20_15 = df15["Close"].rolling(20).mean().iloc[-1]
         trend_15 = df15["Close"].iloc[-1] > ma20_15
-        structure_ok = (
-        df["Low"].iloc[-1] > df["Low"].iloc[-5] and
-        df["High"].iloc[-1] > df["High"].iloc[-5]
-        )
-     
+
         if not trend_15:
             continue
-
-        # ======================
-        # 🔥 Fake Breakout Filter（新）
-        # ======================
-        recent_high = df["High"].iloc[-20:-3].max()
-        fake_bo = (
-            df["Close"].iloc[-1] > recent_high and
-            df["Close"].iloc[-2] < recent_high
+            
+        structure_ok = (
+            df["Low"].iloc[-1] > df["Low"].iloc[-5] and
+            df["High"].iloc[-1] > df["High"].iloc[-5]
         )
-        if fake_bo:
-            continue
+
 
         # ======================
         # 🔥 Volume Filter（修正）
@@ -882,6 +890,28 @@ def loop():
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
         
         volatility = df["Close"].pct_change().rolling(20).std().iloc[-1]
+        
+
+        # ======================
+        # 🔥 Fake Breakout Filter（新）
+        # ======================
+        recent_high = df["High"].iloc[-20:-3].max()
+        
+        fake_bo = (
+            df["Close"].iloc[-1] > recent_high and
+            df["Close"].iloc[-2] < recent_high and
+            (df["High"].iloc[-1] - df["Close"].iloc[-1]) / df["High"].iloc[-1] > 0.003
+        )
+
+        engulfing_fail = (
+            df["Close"].iloc[-2] > recent_high and
+            df["Close"].iloc[-1] < df["Open"].iloc[-1] and
+            df["Close"].iloc[-1] < df["Close"].iloc[-2]
+        )
+        
+        if fake_bo or engulfing_fail:
+            continue
+
 
         # ======================
         # 📰 新聞 + 情緒
@@ -899,52 +929,29 @@ def loop():
         # ======================
         score = score_signal(df, d, sig, sentiment)
 
-        if not structure_ok:
-            score -= 1
-            
-        if vol.iloc[-1] < vol_ma * 0.5:
-            score -= 0.3
-        
-        if volume_spike:
-            score += 1
-        
         if range_pct < volatility * 1.2:
             score -= 1
+
+        if not structure_ok and any(x in sig for x in ["PULLBACK", "RETEST"]):
+            continue
             
+        if volume_spike:
+            score += 1
+        if vol.iloc[-1] < vol_ma * 0.5:
+            continue               
             
         # ======================
         # ❌ 止損太遠（輸太多）
         # ======================
         if (d["price"] - d["exec_stop"]) / d["price"] > 0.035:
             continue
-        
-        # ==========================
-        # ❌ 開市頭30分鐘唔玩（精準版）
-         # =========================
-        now_utc = time.gmtime()
-        hour = now_utc.tm_hour
-        minute = now_utc.tm_min
-
-        # =======================
-        # 13:30 - 14:00 UTC（美股開市亂流）
-        # =======================
-        if hour == 13 and minute >= 30:
-            continue
-            
+                    
         # ======================
-        # 🔴 市場過濾
+        # ⭐ Score filter
         # ======================
-        if not allow_trade:
-            score -= 1   # 唔係 skip
-
         if not allow_trade and score < 4.5:
             continue
-            
-        # ======================
-        # ⭐ 分數過濾
-        # ======================
 
-        
         if score < 3.0:
             continue
             
@@ -955,7 +962,8 @@ def loop():
         # ======================
         zone_low = d["exec_entry_low"]
         zone_high = d["exec_entry_high"]
-        
+
+        # 🔥 先計 distance
         if zone_low <= d["price"] <= zone_high:
             distance_entry = 0
         else:
@@ -963,9 +971,9 @@ def loop():
                 abs(d["price"] - zone_low),
                 abs(d["price"] - zone_high)
             ) / ((zone_high + zone_low) / 2)
-        
 
-        if distance_entry < 0.01:
+        # 🔥 再 check（你原本想做嘅）
+        if distance_entry is not None and distance_entry < 0.01:
             if now - last_alert.get(s+"_near",0) > 900:
                 send(CHAT_ID, f"""⚠️【接近入場】
 
@@ -1006,9 +1014,14 @@ def loop():
         # 🟢 ENTRY ALERT（升級）
         # ======================
         
-        current_open = sum(1 for t in trade_log.values() if t["status"] == "OPEN")
-
+        dist_text = round(distance_entry*100,2) if distance_entry is not None else "N/A"
+        
         if current_open >= 2:
+            allow_entry = False
+        else:
+            allow_entry = True
+
+         if not allow_entry:
             continue
 
         if now - last_alert.get(s+"_entry",0) < 900:
@@ -1043,19 +1056,21 @@ def loop():
                 "size": size,
                 "risk": d["price"] - d["exec_stop"]
             }
-             
+            current_open += 1
+            
             last_alert[s+"_entry_lock"] = time.time()
                     
             if len(trade_log) > 200:
                 oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
                 del trade_log[oldest]
-            
+                
+
             send(CHAT_ID, f"""🟢【ENTRY｜入場】
 
 📈 {s}
 💰 價格：{round(d['price'],2)}
 
-📊 距離入場：{round(distance_entry*100,2)}%
+📊 距離入場：{dist_text}%
 ━━━━━━━━━━━━━━
 🎯 入場區：
 {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
@@ -1161,11 +1176,13 @@ def loop():
             
             # ======================
             # 🚀 TOP SIGNAL（升級UI）
-            # ======================
+            # ======================   
     if candidates:
         s, d, score, sig, news, senti_text, volume_spike = sorted(
-        candidates, key=lambda x: x[2], reverse=True
+            candidates, key=lambda x: x[2], reverse=True
         )[0]
+        
+        show_signal = current_open < 2
 
         vol_tag = "🔥 Volume爆發" if volume_spike else ""
         zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
