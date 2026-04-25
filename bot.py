@@ -303,7 +303,7 @@ def is_bad_setup(d):
     recent_losses = [t for t in trade_log.values() if t["status"] == "LOSS"][-3:]
 
     if len(recent_losses) >= 3:
-        contiune
+        continue
         
         avg_loss_rsi = sum(t.get("rsi",50) for t in recent_losses[-3:]) / 3
 
@@ -796,10 +796,18 @@ def loop():
     # =======================
     allow_trade, market_msg = market_filter()
     
-    if total_risk > 0.03:
+    if total_risk > 0.05:
+        return   
+        
+    elif total_risk > 0.03:
+        risk_mode = "LOW"
+    else:
+        risk_mode = "NORMAL"
+        
+    if risk_mode == "LOW":
         size = 0.5
-    elif total_risk > 0.05:
-        continue
+    else:
+        size = 1.0 if d["rsi"] < 60 else 1.5
         
         allow_trade = False
         market_msg += "\n⚠️ Risk cap reached"
@@ -854,8 +862,6 @@ def loop():
         if not trend_15:
             continue
 
-        if not structure_ok:
-            score -= 1
         # ======================
         # 🔥 Fake Breakout Filter（新）
         # ======================
@@ -893,6 +899,9 @@ def loop():
         # ======================
         score = score_signal(df, d, sig, sentiment)
 
+        if not structure_ok:
+            score -= 1
+            
         if vol.iloc[-1] < vol_ma * 0.5:
             score -= 0.3
         
