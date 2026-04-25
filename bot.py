@@ -752,6 +752,9 @@ def premarket_plan():
 # 🚀 LOOP（升級完整版）
 # ======================
 def loop():
+    if not is_market_open():
+        return
+        
     now = time.time()
        
     print("LOOP RUNNING...")
@@ -763,6 +766,28 @@ def loop():
     for t in trade_log.values()
     if t["status"] == "OPEN"
 )
+
+def is_market_open():
+    now = time.gmtime()
+
+    # 轉英國時間（BST / GMT 自動）
+    uk_time = time.localtime()
+
+    weekday = uk_time.tm_wday  # 0=Mon, 6=Sun
+    hour = uk_time.tm_hour
+    minute = uk_time.tm_min
+
+    # ❌ 星期六日
+    if weekday >= 5:
+        return False
+
+    # 美股時間：14:30 - 21:00（UK time）
+    if hour < 14 or (hour == 14 and minute < 30):
+        return False
+    if hour >= 21:
+        return False
+
+    return True
     
     # =======================
     # 🌍 市場狀態
