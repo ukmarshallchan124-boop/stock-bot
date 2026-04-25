@@ -13,7 +13,6 @@ URL = f"https://api.telegram.org/bot{TOKEN}"
 SYMBOLS = ["TSLA","NVDA","AMD","XOM","JPM"]
 
 trade_log = {}
-
 last_alert = {}
 cache = {}
 CACHE_TTL = 120
@@ -754,8 +753,6 @@ def premarket_plan():
 # ======================
 def loop():
     now = time.time()
-    
-    sig = signal_engine(df, d)
        
     print("DEBUG:", s, sig, round(d["rsi"],1), "RR:", round(d["rr"],2))
 
@@ -790,6 +787,8 @@ def loop():
         d = calc(df)
         if d is None:
             continue
+
+        sig = signal_engine(df, d)
             
         mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
         risk = mid_entry - d["exec_stop"]
@@ -871,10 +870,6 @@ def loop():
         if range_pct < volatility * 1.2:
             score -= 1
             
-        # ======================
-        # 🛑 RISK CONTROL（新）
-        # ======================
-
         # ======================
         # ❌ RR 太低唔玩
         # ======================
