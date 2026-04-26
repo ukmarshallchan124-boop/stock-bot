@@ -927,6 +927,12 @@ def loop():
         if not is_setup(df, d):
             last_alert[s+"_setup_active"] = False
 
+        if is_setup(df, d):
+
+            if not last_alert.get(s+"_setup_active", False):
+
+                last_alert[s+"_setup_active"] = True
+
         # ======================
         # 🧠 SETUP ALERT Early Setup Forming
         # ======================
@@ -1217,7 +1223,10 @@ def loop():
             }
                         
             last_alert[s+"_entry_lock"] = time.time()
-                    
+
+            if s in trade_log:
+                continue
+                
             if len(trade_log) > 200:
                 oldest = min(trade_log, key=lambda k: trade_log[k]["time"])
                 del trade_log[oldest]
