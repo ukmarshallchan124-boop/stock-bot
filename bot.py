@@ -297,14 +297,6 @@ def candle_type(df):
         return "SELL_REJECTION"
 
     return "NEUTRAL"
-        
-    # ============
-    # Fake Signal
-    # ============
-def is_bad_setup(d):
-    if d["rsi"] > 70 or d["rsi"] < 40:
-        return True
-    return False
     
 # =========================================================
 # 🌍 MARKET FILTER（市場過濾｜決定可唔可以交易）
@@ -391,6 +383,34 @@ def score_signal(df, d, sig_code, sentiment):
         score += 1
 
     return score
+    
+    # ======================
+    # setup signal
+    # ======================
+def is_setup(df, d):
+    price = d["price"]
+    
+    ma20 = df["Close"].rolling(20).mean().iloc[-1]
+    trend_ok = price > ma20
+
+    structure_shift = (
+        df["Low"].iloc[-1] > df["Low"].iloc[-3] and
+        df["Low"].iloc[-2] > df["Low"].iloc[-4] and
+        df["High"].iloc[-1] > df["High"].iloc[-3]
+    )
+
+    momentum = df["Close"].iloc[-1] > df["Close"].iloc[-2]
+
+    # 🔥 RSI filter直接放入setup（關鍵）
+    rsi_ok = 45 < d["rsi"] < 65
+
+    # ❗唔喺 entry zone（避免太遲）
+    zone_low = d["exec_entry_low"]
+    zone_high = d["exec_entry_high"]
+    not_in_zone = not (zone_low <= price <= zone_high)
+
+    return trend_ok and structure_shift and momentum and rsi_ok and not_in_zone
+    
 # ======================
 # SIGNAL ENGINE（信號引擎）
 # ======================
@@ -679,6 +699,7 @@ def stock_all():
     msg = "📊【波段掃描 Pro｜Swing Scan Pro】\n\n"
 
     for s in SYMBOLS:
+        
         df = get_df(s,"5m")
         if df is None:
             continue
@@ -799,7 +820,7 @@ def loop():
     
     if not is_market_open():
         return
-    
+        
     now = time.time()    
     now_local = time.localtime()
 
@@ -816,7 +837,7 @@ def loop():
     )
     
     total_risk = sum(
-        (t["risk"] / t["entry"]) * t.get("size",1)
+        t["risk"] * t.get("size",1)
         for t in trade_log.values()
         if t["status"] == "OPEN"
     )
@@ -831,21 +852,61 @@ def loop():
     # 🌍 市場狀態
     # =======================
     allow_trade, market_msg = market_filter()
-    
+
+    # 👇 backup原始市場狀態
+    market_allow = allow_trade
+
+    # 👇 再改（風控）
     if len(recent_losses) == 3:
         allow_trade = False
         print("⛔ Cooldown active")
+
+    # =======================
+    # 🔴 RISK-OFF ALERT（市場風險）
+    # =======================
+    prev_state = last_alert.get("market_state","ON")
+    current_state = "OFF" if not allow_trade else "ON"
+
+    if prev_state == "ON" and current_state == "OFF":
+
+        if not market_allow:
+            reason_zh = "市場轉弱"
+            reason_en = "Market turning weak"
+        else:
+            reason_zh = "連續虧損（冷卻期）"
+            reason_en = "Consecutive losses (cooldown)"
+    
+        send(CHAT_ID, f"""🔴【風險關閉 Risk OFF】
+
+📉 原因 Reason：
+{bi(reason_zh, reason_en)}
+
+━━━━━━━━━━━━━━
+🌍 市場狀態 Market：
+{market_msg}
+
+━━━━━━━━━━━━━━
+⚠️ 建議 Action：
+
+• {bi("停止開新倉","Stop new trades")}
+• {bi("減低風險","Reduce risk")}
+""")
+
+# ❗一定要放出面（無論有冇send）
+    last_alert["market_state"] = current_state
+    
+        
     # =======================
     # 🧠 RISK MODE（乾淨版）
     # =======================    
     if total_risk > 0.05:
         allow_trade = False
         risk_mode = "LOW"
-        market_msg += "\n⛔ Risk cap hit"
+        market_msg += "\n" + bi("⛔ 已達風險上限（停止開倉）", "Risk cap hit (no new trades)")
         
     elif total_risk > 0.03:
         risk_mode = "LOW"
-        market_msg += "\n⚠️ Risk reducing"
+        market_msg += "\n" + bi("⚠️ 風險降低中","Reducing risk")
     else:
         risk_mode = "NORMAL"
 
@@ -862,6 +923,59 @@ def loop():
         d = calc(df)
         if d is None:
             continue
+
+        if not is_setup(df, d):
+            last_alert[s+"_setup_active"] = False
+
+        # ======================
+        # 🧠 SETUP ALERT Early Setup Forming
+        # ======================
+        if is_setup(df, d):
+
+            if last_alert.get(s+"_setup_active", False):
+                pass
+            else:
+                last_alert[s+"_setup_active"] = True
+                # send alert
+            
+            zone_low = d["exec_entry_low"]
+            zone_high = d["exec_entry_high"]
+
+            if zone_low <= d["price"] <= zone_high:
+                distance_entry = 0
+            else:
+                distance_entry = min(
+                    abs(d["price"] - zone_low),
+                    abs(d["price"] - zone_high)
+                ) / ((zone_high + zone_low)/2)
+
+            dist_text = round(distance_entry * 100, 2)
+
+            # ❗太遠唔通知（避免垃圾signal）
+            if distance_entry < 0.03:
+
+                if now - last_alert.get(s+"_setup",0) > 1800:
+
+                    send(CHAT_ID, f"""🧠【Setup形成 Setup Forming】
+
+📈 {s}
+💰 價格 Price：{round(d['price'],2)}
+
+━━━━━━━━━━━━━━
+📊 結構 Structure：
+
+• {bi("趨勢轉強","Trend improving")}
+• {bi("結構上移","Higher lows")}
+
+━━━━━━━━━━━━━━
+🎯 準備區域 Watch Zone：
+
+{round(zone_low,2)} - {round(zone_high,2)}
+
+👉 {bi("等回踩入場","Wait for pullback")}
+""")
+
+                    last_alert[s+"_setup"] = now
 
         sig_code, sig_text = signal_engine(df, d)
         print("DEBUG:", s, sig_code, round(d["rsi"],1), "RR:", round(d["rr"],2))
@@ -882,12 +996,9 @@ def loop():
 
         
         # =======================
-        # ❌ RR 太低直接 skip
+        # ❌  太低直接 skip
         # =======================
         if d["rr"] < 1.8:
-            continue
-        
-        if is_bad_setup(d):
             continue
             
         # ======================
@@ -999,7 +1110,8 @@ def loop():
                 abs(d["price"] - zone_high)
             ) / ((zone_high + zone_low) / 2)
 
-        # 🔥 再 check（你原本想做嘅）
+        dist_text = round(distance_entry * 100, 2)
+        
         if distance_entry < 0.01:
             if now - last_alert.get(s+"_near",0) > 900:
                 send(CHAT_ID, f"""⚠️【接近入場】
@@ -1010,7 +1122,7 @@ def loop():
 🎯 入場區：
 {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-📊 距離入場：{round(distance_entry*100,2)}%
+📊 距離入場：{dist_text}%
 """)
                 
                 last_alert[s+"_near"] = now
@@ -1036,12 +1148,39 @@ def loop():
                 
                     last_alert[s+"_bo"] = now
 
+        # ======================
+        # 🚀 BREAKOUT ALERT（突破提示）
+        # ======================
+        if sig_code == "BREAKOUT":
+
+            if now - last_alert.get(s+"_breakout",0) > 1200:
+
+                strength = bi("🔥 強勢","Strong") if volume_spike else bi("⚠️ 普通","Normal")
+
+                send(CHAT_ID, f"""🚀【突破發生 Breakout】
+
+📈 {s}
+💰 價格 Price：{round(d['price'],2)}
+
+━━━━━━━━━━━━━━
+📊 突破狀態 Status：
+
+• {bi("已突破前高","Break above resistance")}
+• {strength}
+
+━━━━━━━━━━━━━━
+⚠️ 行動 Action：
+
+• {bi("不建議追高","Avoid chasing")}
+• {bi("等待回踩確認","Wait for retest")}
+""")
+
+                last_alert[s+"_breakout"] = now
+
 
         # ======================
         # 🟢 ENTRY ALERT（升級）
         # ======================
-        
-        dist_text = round(distance_entry*100,2)
 
         if current_open >= 2:
             continue
@@ -1059,15 +1198,11 @@ def loop():
         
         mid = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
 
-        if abs(d["price"] - mid) / mid > 0.012:
-            continue
-            
         if (
             sig_code in ["PULLBACK", "RETEST"]
             and sentiment in ["POSITIVE","NEUTRAL"]
-            and d["rsi"] < 65
             and df["Close"].iloc[-1] > df["Close"].iloc[-2]
-            
+            and abs(d["price"] - mid) / mid <= 0.01   # ✅ 放入條件
         ):
                     
             trade_log[s] = {
@@ -1256,7 +1391,7 @@ def loop():
             # ======================
             # 🚀 TOP SIGNAL（升級UI）
             # ======================
-    if candidates and current_open == 0:
+    if candidates and current_open < 2:
         s, d, score, sig_code, sig_text, news, senti_text, volume_spike = sorted(
             candidates, key=lambda x: x[2], reverse=True
         )[0]
