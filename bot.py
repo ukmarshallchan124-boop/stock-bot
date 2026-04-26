@@ -702,7 +702,10 @@ def stock_all():
         
         msg += f"""📈【{s}】
 
-👉 {sig_text} {tags}
+💰 價格 Price：{round(d['price'],2)}
+📊 RR：{round(d['rr'],2)} ｜ RSI：{d['rsi']}
+
+👉 {sig_text} {tags
 
 ━━━━━━━━━━━━━━
 🎯 【入場 Execution】
@@ -715,8 +718,6 @@ def stock_all():
 
 🎯 Target：
 {round(d['exec_target'],2)}
-
-📊 RR：{round(d['rr'],2)} ｜ RSI：{d['rsi']}
 
 ━━━━━━━━━━━━━━
 🧠 【背景 Context】
