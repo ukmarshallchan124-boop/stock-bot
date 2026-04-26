@@ -3,6 +3,12 @@ import requests, os, time, threading
 import yfinance as yf
 import pandas as pd
 
+# ======================
+# 🌐 BILINGUAL HELPER
+# ======================
+def bi(zh, en):
+    return f"{zh}｜{en}"
+    
 app = Flask(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -77,8 +83,8 @@ def get_news_sentiment(symbol):
 
         news = data.get("news", [])
         if not news:
-            return "UNKNOWN", "⚠️ 無新聞（數據不足）"
-
+            return "UNKNOWN", bi("⚠️ 無新聞（數據不足）", "No data")
+            
         text = " ".join([n.get("title","") for n in news]).lower()
 
         positive = ["beat","growth","strong","upgrade","record","ai"]
@@ -93,15 +99,16 @@ def get_news_sentiment(symbol):
                 score -= 1
 
         if score >= 2:
-            return "POSITIVE", "🟢 利好 Positive"
+            return "POSITIVE", bi("🟢 利好", "Positive")
         elif score <= -2:
-            return "NEGATIVE", "🔴 利淡 Negative"
+            return "NEGATIVE", bi("🔴 利淡", "Negative")
         else:
-            return "NEUTRAL", "🟡 中性 Neutral"
+            return "NEUTRAL", bi("🟡 中性", "Neutral")
 
     except Exception as e:
            print("SENTIMENT ERROR:", e)
-           return "UNKNOWN", "⚠️ 數據缺失"
+           return "UNKNOWN", bi("⚠️ 無新聞", "No data")
+        
 # =========================================================
 # 🧠 MASTER NEWS FUNCTION（智能 fallback）
 # =========================================================
@@ -116,7 +123,7 @@ def get_news(symbol):
     if news:
         return news
 
-    return "🟡 無新聞 No news"
+    return bi("🟡 無新聞", "No news")
 # ======================
 # DATA（數據獲取 Data Fetch）
 # ======================
@@ -305,8 +312,8 @@ def is_bad_setup(d):
 def market_filter():
     df = get_df("SPY","15m")
     if df is None or df.empty:
-        return True, "⚠️ 無法判斷市場"
-
+        return True, bi("⚠️ 無法判斷市場", "Market unclear")
+        
     price = df["Close"].iloc[-1]
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     ma50 = df["Close"].rolling(50).mean().iloc[-1]
@@ -318,33 +325,33 @@ def market_filter():
 
     # 🔥 決策邏輯
     if not trend and not momentum:
-        return False, "🔴 Risk OFF（市場轉弱）"
+        return False, bi("🔴 市場轉弱", "Risk OFF")
     elif trend and momentum and structure:
-        return True, "🟢 Risk ON（市場健康）"
+        return True, bi("🟢 市場健康", "Risk ON")
     else:
-        return True, "🟡 中性（Selective trades）"
-
+        return True, bi("🟡 中性", "Selective trades")
+        
 # =========================================================
 # ⭐ SCORING ENGINE（信號評分系統）
 # =========================================================
-def score_signal(df, d, sig, sentiment):
+def score_signal(df, d, sig_code, sentiment):
     score = 0
 
     # ======================
     # 🎯 信號強度
     # ======================
-    if "ENTRY" in sig:
+    if sig_code == "ENTRY":
         score += 2
 
     # ❌ 唔再追 breakout
-    if "BREAKOUT（等回踩）" in sig:
+    if sig_code == "BREAKOUT":
         score -= 1
 
     # ✅ 新策略（核心）
-    if "PULLBACK" in sig:
+    if sig_code == "PULLBACK":
         score += 2.5
 
-    if "RETEST" in sig:
+    if sig_code == "RETEST":
         score += 2.5
 
     # ======================
@@ -393,8 +400,8 @@ def signal_engine(df, d):
     # 安全檢查
     # ======================
     if len(df) < 30:
-        return "🟡 WAIT｜數據不足"
-
+        return ("WAIT", bi("🟡 數據不足", "WAIT - insufficient data"))
+        
     price = d["price"]
 
     # ======================
@@ -402,8 +409,8 @@ def signal_engine(df, d):
     # ======================
     support, resistance = get_zones(df)
 
-    recent_high = df["High"].iloc[-30:-5].max()
-    recent_low = df["Low"].iloc[-30:-5].min()
+    recent_high = df["High"].iloc[-20:-3].max() if len(df) > 25 else df["High"].max()
+    recent_low = df["Low"].iloc[-20:-3].min() if len(df) > 25 else df["Low"].min()
     
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     trend_ok = price > ma20
@@ -475,30 +482,30 @@ def signal_engine(df, d):
 
     # ❌ 假突破
     if candle == "SELL_REJECTION" and breakout:
-       return "⚠️ FAKE BREAKOUT｜假突破"
+       return ("FAKE_BREAKOUT", bi("⚠️ 假突破", "Fake breakout"))
 
     # 🔥 吸貨確認
     if candle == "BUY_REJECTION" and pullback_support:
-       return "🔥 吸貨確認｜更強PULLBACK"
+       return ("ACCUMULATION", bi("🔥 吸貨確認", "Accumulation"))
 
     # ======================
     # 🚫 唔追 breakout
     # ======================
 
     if breakdown:
-        return "🔴 RISK｜風險"
+        return ("RISK", bi("🔴 風險", "Risk"))
 
     elif breakout_retest:
-        return "🔥 RETEST｜突破回踩"
-
+        return ("RETEST", bi("🔥 突破回踩", "Retest"))
+        
     elif pullback_support:
-        return "🟢 PULLBACK｜回踩入場"
-
+        return ("PULLBACK", bi("🟢 回踩入場", "Pullback"))
+        
     elif breakout:
-        return "🚫 BREAKOUT（等回踩）"
-
+        return ("BREAKOUT", bi("🚫 突破（等回踩）", "Breakout wait"))
+        
     else:
-        return "🟡 WAIT｜觀望"
+        return ("WAIT", bi("🟡 觀望", "Wait"))
 
 # ======================
 # MARKET（市場分析）
@@ -512,22 +519,22 @@ def market():
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     ma50 = df["Close"].rolling(50).mean().iloc[-1]
 
-    trend = "📈 上升 Uptrend" if price > ma20 else "📉 下降 Downtrend"
-    structure = "健康 Healthy" if price > ma50 else "轉弱 Weakening"
+    trend = bi("📈 上升", "Uptrend") if price > ma20 else bi("📉 下降", "Downtrend")
+    structure = bi("健康", "Healthy") if price > ma50 else bi("轉弱", "Weakening")
 
     # momentum
     ma5 = df["Close"].rolling(5).mean().iloc[-1]
-    momentum = "🔥 強 Strong" if ma5 > ma20 else "❄️ 弱 Weak"
-
+    momentum = bi("🔥 強", "Strong") if ma5 > ma20 else bi("❄️ 弱", "Weak")
+    
     # 行動建議
     if price > ma20 and ma5 > ma20:
-        action = "🟢 可做多（順勢交易）｜Long bias"
+        action = bi("🟢 可做多（順勢交易）", "Long bias")
     elif price < ma20 and ma5 < ma20:
-        action = "🔴 保守 / 避險｜Risk-off"
+        action = bi("🔴 保守 / 避險", "Risk-off")
     else:
-        action = "🟡 震盪（等方向）｜Choppy"
+        action = bi("🟡 震盪（等方向）", "Choppy")
         
-    return f"""🌍【市場分析 Market】
+    return f"""🌍【市場方向 Market Bias】
 
 📊 指數 Index：SPY
 💰 價格 Price：{round(price,2)}
@@ -536,8 +543,17 @@ def market():
 🏗 結構 Structure：{structure}
 ⚡ 動能 Momentum：{momentum}
 
-🧠 判斷 Bias：
+━━━━━━━━━━━━━━
+🧠 市場狀態 Market State：
+
 {action}
+
+━━━━━━━━━━━━━━
+⚠️ 交易指引 Trading Guide：
+
+• 🟢 {bi("只做多", "Long bias only")}
+• 🔴 {bi("減倉 / 停手", "Reduce risk / Stay out")}
+• 🟡 {bi("揀setup先入", "Be selective")}
 
 ━━━━━━━━━━━━━━
 """
@@ -573,34 +589,42 @@ def gold():
     ma20 = df["Close"].rolling(20).mean().iloc[-1]
     ma50 = df["Close"].rolling(50).mean().iloc[-1]
 
-    trend = "📈 上升 Uptrend" if price > ma20 else "📉 下降 Downtrend"
-    structure = "強勢 Strong" if price > ma50 else "轉弱 Weak"
+    trend = bi("📈 上升", "Uptrend") if price > ma20 else bi("📉 下降", "Downtrend")
+    structure = bi("強勢", "Strong") if price > ma50 else bi("轉弱", "Weak")
 
     # ======================
     # 黃金邏輯
     # ======================
     if price > ma20:
-        logic = "⚠️ 市場避險情緒上升（Risk ↑）"
-        action = "🟡 可作對沖｜Hedge"
+        logic = bi("⚠️ 市場避險情緒上升", "Risk sentiment rising")
+        action = bi("🟡 可作對沖", "Use as hedge")
     else:
-        logic = "💰 資金流向風險資產（Risk-on）"
-        action = "🟢 可忽略黃金｜Focus stocks"
+        logic = bi("💰 資金流向風險資產", "Risk-on")
+        action = bi("🟢 可忽略黃金", "Focus stocks")
         
-    return f"""🥇【黃金分析 Gold】
+    return f"""🥇【黃金資金流 Gold Flow】
 
 💰 價格 Price：{round(price,2)}
 
 📈 趨勢 Trend：{trend}
 🏗 結構 Structure：{structure}
 
+━━━━━━━━━━━━━━
 🧠 市場邏輯 Market Logic：
+
 {logic}
 
-👉 策略 Strategy：
+━━━━━━━━━━━━━━
+🎯 策略 Strategy：
+
 {action}
+
+• Hedge → {bi("避險用", "Risk hedge")}
+• Ignore → {bi("專注股票", "Focus stocks")}
 
 ━━━━━━━━━━━━━━
 """
+
 # ======================
 # LONG TERM（長線分析）
 # ======================
@@ -618,11 +642,11 @@ def long_term():
         ma200 = df["Close"].rolling(200).mean().iloc[-1]
 
         if price > ma50 and price > ma200:
-            return "📈 強勢上升 Strong Uptrend"
+            return bi("📈 強勢上升", "Strong Uptrend")
         elif price > ma200:
-            return "🟡 中期上升 Pullback"
+            return bi("🟡 中期上升", "Pullback")
         else:
-            return "🔴 弱勢 Downtrend"
+            return bi("🔴 弱勢", "Downtrend")
 
     spy_trend = analyze(spy)
     msft_trend = analyze(msft)
@@ -663,14 +687,14 @@ def stock_all():
         if d is None:
             continue
     
-        sig = signal_engine(df,d)
+        sig_code, sig_text = signal_engine(df,d)
 
         vol = df["Volume"]
         vol_ma = vol.rolling(10).mean().iloc[-1]
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
 
         vol_tag = "🔥 Volume" if volume_spike else ""
-        zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
+        zone_tag = "📍 Zone" if sig_code in ["PULLBACK","RETEST"] else ""
         tags = " ".join(filter(None, [vol_tag, zone_tag]))
 
         news = get_news(s)
@@ -678,27 +702,29 @@ def stock_all():
         
         msg += f"""📈【{s}】
 
-💰 價格：{round(d['price'],2)}
-📊 RR：{round(d['rr'],2)} ｜ RSI：{d['rsi']}
-
-👉 信號：
-{sig} {tags}
+👉 {sig_text} {tags}
 
 ━━━━━━━━━━━━━━
-🎯 入場區：
+🎯 【入場 Execution】
+
+📍 Entry：
 {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-🛑 止損：
+🛑 Stop：
 {round(d['exec_stop'],2)}
 
-🎯 目標：
+🎯 Target：
 {round(d['exec_target'],2)}
-━━━━━━━━━━━━━━
 
-🧠 情緒：
+📊 RR：{round(d['rr'],2)} ｜ RSI：{d['rsi']}
+
+━━━━━━━━━━━━━━
+🧠 【背景 Context】
+
+情緒 Sentiment：
 {senti_text}
 
-📰 新聞：
+📰 新聞 News：
 {news}
 
 ━━━━━━━━━━━━━━
@@ -836,8 +862,8 @@ def loop():
         if d is None:
             continue
 
-        sig = signal_engine(df, d)
-        print("DEBUG:", s, sig, round(d["rsi"],1), "RR:", round(d["rr"],2))
+        sig_code, sig_text = signal_engine(df, d)
+        print("DEBUG:", s, sig_code, round(d["rsi"],1), "RR:", round(d["rr"],2))
     
         mid_entry = (d["exec_entry_low"] + d["exec_entry_high"]) / 2
         risk = mid_entry - d["exec_stop"]
@@ -883,6 +909,9 @@ def loop():
         # ======================
         vol = df["Volume"]
         vol_ma = vol.rolling(10).mean().iloc[-1]
+
+        if pd.isna(vol_ma):
+            continue
         
         volume_spike = vol.iloc[-1] > vol_ma * 1.5
         
@@ -892,7 +921,7 @@ def loop():
         # ======================
         # 🔥 Fake Breakout Filter（新）
         # ======================
-        recent_high = df["High"].iloc[-20:-3].max()
+        recent_high = df["High"].iloc[-20:-3].max() if len(df) > 25 else df["High"].max()
         
         fake_bo = (
             df["Close"].iloc[-1] > recent_high and
@@ -924,12 +953,12 @@ def loop():
         # ======================
         # ⭐ 評分
         # ======================
-        score = score_signal(df, d, sig, sentiment)
+        score = score_signal(df, d, sig_code, sentiment)
 
         if range_pct < volatility * 1.2:
             score -= 1
 
-        if not structure_ok and any(x in sig for x in ["PULLBACK", "RETEST"]):
+        if not structure_ok and sig_code in ["PULLBACK", "RETEST"]:
             continue
             
         if volume_spike:
@@ -952,7 +981,7 @@ def loop():
         if score < 3.0:
             continue
             
-        candidates.append((s, d, score, sig, news, senti_text, volume_spike))
+        candidates.append((s, d, score, sig_code, sig_text, news, senti_text, volume_spike))
 
         # ======================
         # ⚠️ 預警：接近入場區（新）
@@ -1033,7 +1062,7 @@ def loop():
             continue
             
         if (
-            any(x in sig for x in ["PULLBACK", "RETEST"])
+            sig_code in ["PULLBACK", "RETEST"]
             and sentiment in ["POSITIVE","NEUTRAL"]
             and d["rsi"] < 65
             and df["Close"].iloc[-1] > df["Close"].iloc[-2]
@@ -1045,7 +1074,7 @@ def loop():
                 "target": d["exec_target"],
                 "stop": d["exec_stop"],
                 "time": time.time(),
-                "signal": sig,
+                "signal": sig_code,
                 "status": "OPEN",
                 "size": size,
                 "risk": d["price"] - d["exec_stop"]
@@ -1058,32 +1087,40 @@ def loop():
                 del trade_log[oldest]
                 
 
-            send(CHAT_ID, f"""🟢【ENTRY｜入場】
+            send(CHAT_ID, f"""🟢【入場信號 Entry Signal】
 
 📈 {s}
-💰 價格：{round(d['price'],2)}
+💰 價格 Price：{round(d['price'],2)}
 
-📊 距離入場：{dist_text}%
 ━━━━━━━━━━━━━━
-🎯 入場區：
+🧠 【原因 WHY】
+
+• 信號 Signal：{sig_text}
+• RSI：{d['rsi']}
+• RR：{round(d['rr'],2)}
+
+━━━━━━━━━━━━━━
+🎯 【執行 Execution】
+
+📍 入場 Entry：
 {round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-🛑 止損：
+🛑 止損 Stop：
 {round(d['exec_stop'],2)}
 
-🎯 目標：
+🎯 目標 Target：
 {round(d['exec_target'],2)}
+
 ━━━━━━━━━━━━━━
+🧠 【市場 Context】
 
-📊 RR：{round(d['rr'],2)}
+🌍 Market：
+{market_msg}
 
-🧠 情緒：
+🧠 Sentiment：
 {senti_text}
 
-📰 新聞：
-{news}
-
-━━━━━━━━━━
+━━━━━━━━━━━━━━
 """)
             last_alert[s+"_entry"] = now
                 
@@ -1092,9 +1129,9 @@ def loop():
         # ======================
         # 🔴 RISK ALERT
         # ======================
-        if "RISK" in sig:
+        if sig_code == "RISK":
             if now - last_alert.get(s+"_risk",0) > 1800:
-                send(CHAT_ID, f"🔴 RISK｜風險 {s}")
+                send(CHAT_ID, f"{bi('🔴 風險', 'RISK')} {s}")
             
                 last_alert[s+"_risk"] = now
 
@@ -1208,7 +1245,7 @@ def loop():
         # 🔄 STOP 更新通知
         # ======================
         if t["stop"] != old_stop:
-            send(CHAT_ID, f"""🔄【STOP UPDATED】
+            send(CHAT_ID, f"""🔄【STOP UPDATED｜止損更新】
 
 📈 {symbol}
 🛑 新止損：{round(t["stop"],2)}
@@ -1219,7 +1256,7 @@ def loop():
             # 🚀 TOP SIGNAL（升級UI）
             # ======================
     if candidates and current_open == 0:
-        s, d, score, sig, news, senti_text, volume_spike = sorted(
+        s, d, score, sig_code, sig_text, news, senti_text, volume_spike = sorted(
             candidates, key=lambda x: x[2], reverse=True
         )[0]
         if s in trade_log and trade_log[s]["status"] == "OPEN":
@@ -1228,40 +1265,37 @@ def loop():
         if now - last_alert.get(s,0) > 600:
 
             vol_tag = "🔥 Volume爆發" if volume_spike else ""
-            zone_tag = "📍 Zone" if "PULLBACK" in sig or "RETEST" in sig else ""
+            zone_tag = "📍 Zone" if sig_code in ["PULLBACK","RETEST"] else ""
             tags = " ".join(filter(None, [vol_tag, zone_tag]))
         
             
-            send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會】
+            send(CHAT_ID, f"""🚀【TOP SIGNAL｜最強機會 Best Setup】
+            
+📈 {s} ｜ ⭐ Score：{round(score,1)}
 
-📈 {s}
-💰 價格：{round(d['price'],2)}
-📊 RR：{round(d['rr'],2)}
+👉 信號 Signal：
+{sig_text} {tags}
 
-👉 信號：
-{sig} {tags}
 ━━━━━━━━━━━━━━
+🎯 【入場區 Entry Zone】
 
-🎯 入場區：
-{round(d['exec_entry_low'],2)} - 
-{round(d['exec_entry_high'],2)}
+{round(d['exec_entry_low'],2)} - {round(d['exec_entry_high'],2)}
 
-🛑 止損：
+🛑 止損 Stop：
 {round(d['exec_stop'],2)}
 
-🎯 目標：
+🎯 目標 Target：
 {round(d['exec_target'],2)}
+
 ━━━━━━━━━━━━━━
+🌍 【市場 Market】
 
-⭐ Score：{round(score,1)}
-
-🌍 市場：
 {market_msg}
 
-🧠 情緒：
+🧠 情緒 Sentiment：
 {senti_text}
 
-📰 新聞：
+📰 新聞 News：
 {news}
 
 ━━━━━━━━━━━━━━
@@ -1333,8 +1367,8 @@ def webhook():
     text = msg.get("text","").lower()
 
     if "/start" in text:
-        send(chat_id,"🚀 Bot Ready｜已啟動")
-
+        send(chat_id, bi("🚀 已啟動", "Bot Ready"))
+        
     elif "/stock" in text:
         send(chat_id,stock_all())
 
