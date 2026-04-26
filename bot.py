@@ -972,7 +972,7 @@ def loop():
 👉 {bi("等回踩入場","Wait for pullback")}
 """)
 
-                    last_alert[s+"_setup"] = now
+                last_alert[s+"_setup"] = now
 
         sig_code, sig_text = signal_engine(df, d)
         print("DEBUG:", s, sig_code, round(d["rsi"],1), "RR:", round(d["rr"],2))
