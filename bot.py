@@ -924,26 +924,13 @@ def loop():
         if d is None:
             continue
 
-        if not is_setup(df, d):
+        setup = is_setup(df, d)
+
+        if not setup:
             last_alert[s+"_setup_active"] = False
 
-        if is_setup(df, d):
+        if setup:
 
-            if not last_alert.get(s+"_setup_active", False):
-
-                last_alert[s+"_setup_active"] = True
-
-        # ======================
-        # 🧠 SETUP ALERT Early Setup Forming
-        # ======================
-        if is_setup(df, d):
-
-            if last_alert.get(s+"_setup_active", False):
-                pass
-            else:
-                last_alert[s+"_setup_active"] = True
-                # send alert
-            
             zone_low = d["exec_entry_low"]
             zone_high = d["exec_entry_high"]
 
@@ -957,12 +944,16 @@ def loop():
 
             dist_text = round(distance_entry * 100, 2)
 
-            # ❗太遠唔通知（避免垃圾signal）
-            if distance_entry < 0.03:
+            # 👉 第一次出現 + 距離合理
+            if (
+                not last_alert.get(s+"_setup_active", False)
+                and distance_entry < 0.03
+                and now - last_alert.get(s+"_setup",0) > 1800
+            ):
 
-                if now - last_alert.get(s+"_setup",0) > 1800:
+                last_alert[s+"_setup_active"] = True
 
-                    send(CHAT_ID, f"""🧠【Setup形成 Setup Forming】
+                send(CHAT_ID, f"""🧠【Setup形成 Setup Forming
 
 📈 {s}
 💰 價格 Price：{round(d['price'],2)}
