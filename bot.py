@@ -705,7 +705,7 @@ def stock_all():
 💰 價格 Price：{round(d['price'],2)}
 📊 RR：{round(d['rr'],2)} ｜ RSI：{d['rsi']}
 
-👉 {sig_text} {tags
+👉 {sig_text} {tags}
 
 ━━━━━━━━━━━━━━
 🎯 【入場 Execution】
